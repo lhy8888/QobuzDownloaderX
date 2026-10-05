@@ -39,6 +39,8 @@ internal static class Program
     {
         if (Environment.OSVersion.Platform != PlatformID.Win32NT) { Console.Error.WriteLine("WindowsChecks requires Windows."); return 1; }
         if (!File.Exists(Environment.GetEnvironmentVariable("QBDLX_TEST_FLAC"))) { Console.Error.WriteLine("The official FLAC decoder is required."); return 1; }
+        string reportPath = Environment.GetEnvironmentVariable("QBDLX_TEST_REPORT");
+        if (!string.IsNullOrEmpty(reportPath)) Environment.SetEnvironmentVariable("QBDLX_TEST_REPORT", Path.GetFullPath(reportPath));
         Directory.CreateDirectory(temporary);
         string previous = Environment.CurrentDirectory;
         Environment.CurrentDirectory = temporary;
