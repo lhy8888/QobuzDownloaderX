@@ -196,7 +196,7 @@ class Program
         Add("long audio names leave enough space for receipts and temporary writes",()=>Sync(()=>
         {
             var q = new AudioQuality { IsFlac = true, BitDepth = 16, SampleRate = 44100 };
-            string path = AudioVerification.IdentityPath(Path.Combine(Temporary, new string('a', 250) + ".flac"), Track(), "27", q);
+            string path = AudioVerification.IdentityPath(Path.Combine(Temporary, new string('a', 300) + ".flac"), Track(), "27", q);
             Check(Path.GetFileName(path).Length + " (100000)".Length + AudioVerification.ReceiptExtension.Length <= 255);
             File.Copy(Fixture(".flac"), path);
             AudioVerification.SaveReceipt(path, Track(), "27", q);

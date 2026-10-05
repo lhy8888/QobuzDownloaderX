@@ -127,9 +127,14 @@ namespace QobuzDownloaderX.Helpers
         internal static string IdentityPath(string path, Item track, string format, AudioQuality quality)
         {
             string suffix = " [ID" + track.Id + "-F" + format + (quality.IsFlac ? "-" + quality.BitDepth + "bit-" + quality.SampleRate + "Hz" : "-320kbps") + "]";
-            string ext = Path.GetExtension(path);
-            string name = DownloadPaths.Truncate(Path.GetFileNameWithoutExtension(path), ext.Length + suffix.Length + ReceiptExtension.Length + DuplicateNameReserve);
-            return Path.Combine(Path.GetDirectoryName(path), name + suffix + ext);
+            string fileName = Path.GetFileName(path);
+            string ext = Path.GetExtension(fileName);
+            string name = DownloadPaths.Truncate(Path.GetFileNameWithoutExtension(fileName), ext.Length + suffix.Length + ReceiptExtension.Length + DuplicateNameReserve);
+            // Windows validates every component in GetDirectoryName, including
+            // the original overlong song name. Extract the directory prefix
+            // before shortening that name; the final path is checked separately.
+            string directory = path.Substring(0, path.Length - fileName.Length);
+            return Path.Combine(directory, name + suffix + ext);
         }
     }
 }
