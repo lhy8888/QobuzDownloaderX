@@ -275,11 +275,13 @@ internal static class Program
             _ = loginWindow.Handle;
             var worker = Field<BackgroundWorker>(loginWindow, "loginBackground");
             var original = (DoWorkEventHandler)Delegate.CreateDelegate(typeof(DoWorkEventHandler), loginWindow, "loginBackground_DoWork");
-            bool completed = false; int completedThread = 0;
+            bool completed = false; int displayedThread = 0;
             using (var release = new ManualResetEventSlim())
             {
                 DoWorkEventHandler fakeLogin = (sender, args) => { release.Wait(); args.Result = true; };
-                RunWorkerCompletedEventHandler observed = (sender, args) => { completedThread = Thread.CurrentThread.ManagedThreadId; completed = true; };
+                RunWorkerCompletedEventHandler observed = (sender, args) => { completed = true; };
+                EventHandler displayed = (sender, args) => { if (form.Visible) displayedThread = Thread.CurrentThread.ManagedThreadId; };
+                form.VisibleChanged += displayed;
                 worker.DoWork -= original; worker.DoWork += fakeLogin; worker.RunWorkerCompleted += observed;
                 try
                 {
@@ -289,14 +291,15 @@ internal static class Program
                     Invoke(loginWindow, "loginButton_Click", loginWindow, EventArgs.Empty);
                     Check(worker.IsBusy); release.Set();
                     var timeout = Stopwatch.StartNew();
-                    while (!completed && timeout.Elapsed < TimeSpan.FromSeconds(15)) { Application.DoEvents(); Thread.Sleep(10); }
-                    Check(completed && completedThread == uiThread && form.Visible && !form.InvokeRequired);
+                    while ((!completed || !form.Visible) && timeout.Elapsed < TimeSpan.FromSeconds(15)) { Application.DoEvents(); Thread.Sleep(10); }
+                    Check(completed && displayedThread == uiThread && form.Visible && !form.InvokeRequired);
                     Check(form.languageComboBox.Items.Contains("EN"), "Language assets missing when started from another directory");
                     Check(form.downloadOutput.Text.Contains("Synthetic test user"));
                 }
                 finally
                 {
                     release.Set(); worker.DoWork -= fakeLogin; worker.DoWork += original; worker.RunWorkerCompleted -= observed;
+                    form.VisibleChanged -= displayed;
                     form.Hide();
                 }
             }

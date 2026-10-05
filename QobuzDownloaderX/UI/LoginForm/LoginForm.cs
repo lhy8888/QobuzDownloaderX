@@ -420,6 +420,14 @@ namespace QobuzDownloaderX
         private void loginBackground_RunWorkerCompleted(object sender, RunWorkerCompletedEventArgs e)
         {
             if (IsDisposed || Disposing) return;
+            // BackgroundWorker can complete without a Windows synchronization context after other windows close.
+            if (InvokeRequired)
+            {
+                try { BeginInvoke(new Action(() => loginBackground_RunWorkerCompleted(sender, e))); }
+                catch (ObjectDisposedException) { }
+                catch (InvalidOperationException) when (IsDisposed || Disposing || !IsHandleCreated) { }
+                return;
+            }
             loginButton.Enabled = true;
             if (e.Error != null)
             {
@@ -430,7 +438,7 @@ namespace QobuzDownloaderX
             if (!e.Cancelled && e.Result is bool succeeded && succeeded)
             {
                 // The existing application message loop owns both windows.
-                // BackgroundWorker completion returns to that original UI thread.
+                // Completion explicitly returns to the login window when a context is unavailable.
                 qbdlx.Show();
                 Hide();
             }
