@@ -14,6 +14,8 @@ internal sealed class CheckReport
             new XAttribute("time", elapsed.TotalSeconds.ToString("F3", CultureInfo.InvariantCulture)));
         if (error != null) item.Add(new XElement("failure", new XAttribute("type", error.GetType().Name), error.ToString()));
         cases.Add(item);
+        if (error != null && Environment.GetEnvironmentVariable("GITHUB_ACTIONS") == "true")
+            Console.WriteLine("::error::" + (name + ": " + error).Replace("%", "%25").Replace("\r", "%0D").Replace("\n", "%0A"));
     }
     internal void Save(string suite)
     {
