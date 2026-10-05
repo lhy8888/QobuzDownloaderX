@@ -1,8 +1,7 @@
 param([ValidateSet('Debug', 'Release')][string]$Configuration = 'Release')
 $ErrorActionPreference = 'Stop'
-dotnet build tests/WindowsChecks/WindowsChecks.csproj --configuration $Configuration
-if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+. "$PSScriptRoot/ci-command.ps1"
+Invoke-CICommand dotnet @('build', 'tests/WindowsChecks/WindowsChecks.csproj', '--configuration', $Configuration) artifacts/windows-check-build.txt
 $output = "tests/WindowsChecks/bin/$Configuration/net48"
 Copy-Item "QobuzDownloaderX/bin/$Configuration/*" $output -Recurse -Force
-& "$output/WindowsChecks.exe" 2>&1 | Tee-Object artifacts/windows-output.txt
-if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+Invoke-CICommand "$output/WindowsChecks.exe" @() artifacts/windows-output.txt
