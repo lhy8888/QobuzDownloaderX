@@ -165,13 +165,15 @@ namespace QobuzDownloaderX
                 {
                     password = savedPassword;
                     passwordTextBox.Text = savedPassword;
+                    Settings.Default.savedPassword = CredentialProtection.Encrypt(savedPassword, bytes => ProtectedData.Protect(bytes, null, DataProtectionScope.CurrentUser));
+                    Settings.Default.Save();
                 }
                 catch (CryptographicException) // cannot decrypt (different machine/user)
                 {
-                    password = savedPassword;
-                    passwordTextBox.Text = savedPassword;
-                    // password = "";
-                    // passwordTextBox.Text = passwordPlaceholder;
+                    password = string.Empty;
+                    passwordTextBox.Text = passwordPlaceholder;
+                    Settings.Default.savedPassword = string.Empty;
+                    Settings.Default.Save();
                 }
             }
             else
@@ -231,11 +233,15 @@ namespace QobuzDownloaderX
                 {
                     app_secret = savedAppSecret;
                     appSecretTextBox.Text = app_secret;
+                    Settings.Default.savedSecret = CredentialProtection.Encrypt(savedAppSecret, bytes => ProtectedData.Protect(bytes, null, DataProtectionScope.CurrentUser));
+                    Settings.Default.Save();
                 }
                 catch (CryptographicException) // cannot decrypt (different machine/user)
                 {
-                    app_secret = savedAppSecret;
-                    appSecretTextBox.Text = app_secret;
+                    app_secret = string.Empty;
+                    appSecretTextBox.Text = string.Empty;
+                    Settings.Default.savedSecret = string.Empty;
+                    Settings.Default.Save();
                     // app_secret = "";
                     // appSecretTextBox.Text = "";
                 }
@@ -276,7 +282,7 @@ namespace QobuzDownloaderX
 #if DEBUG
             logger.Info("Currently saved username: " + username);
             logger.Info("Currently saved app ID: " + Settings.Default.savedAppID);
-            logger.Info("Currently saved app secret: " + Settings.Default.savedSecret);
+            logger.Debug("Saved application credentials checked.");
 #endif
         }
 
@@ -502,35 +508,12 @@ namespace QobuzDownloaderX
             username = emailTextBox.Text;
             password = passwordTextBox.Text;
 
-            // Encrypt username
-            try
-            {
-                byte[] emailBytes = Encoding.UTF8.GetBytes(username);
-                byte[] protectedBytes = ProtectedData.Protect(emailBytes, null, DataProtectionScope.CurrentUser);
-
-                Settings.Default.savedEmail = Convert.ToBase64String(protectedBytes);
-            }
-            catch
-            {
-                // Fallback: store plain text
-                Settings.Default.savedEmail = username;
-                logger.Warning("Email encryption failed, storing it as plain text.");
-            }
-
-            // Encrypt password
-            try
-            {
-                byte[] passwordBytes = Encoding.UTF8.GetBytes(password);
-                byte[] protectedBytes = ProtectedData.Protect(passwordBytes, null, DataProtectionScope.CurrentUser);
-
-                Settings.Default.savedPassword = Convert.ToBase64String(protectedBytes);
-            }
-            catch
-            {
-                // Fallback: store plain text
-                Settings.Default.savedPassword = password;
-                logger.Warning("Password encryption failed, storing it as plain text.");
-            }
+            Settings.Default.savedEmail = CredentialProtection.Encrypt(username,
+                bytes => ProtectedData.Protect(bytes, null, DataProtectionScope.CurrentUser));
+            Settings.Default.savedPassword = CredentialProtection.Encrypt(password,
+                bytes => ProtectedData.Protect(bytes, null, DataProtectionScope.CurrentUser));
+            if (Settings.Default.savedPassword.Length == 0)
+                logger.Warning("Credentials could not be protected and were not saved.");
 
             // Save to settings
             Settings.Default.Save();
@@ -590,7 +573,7 @@ namespace QobuzDownloaderX
 
                     // Set app_secret
                     app_secret = QoService.GetAppSecret(app_id, user_auth_token).App_Secret;
-                    logger.Info("App secret: " + app_secret);
+                    logger.Debug("Application credentials obtained.");
 
                     // Re-enable login button, and send app_id & app_secret to QBDLX
                     loginButton.Invoke(new Action(() => loginButton.Enabled = true));
@@ -643,7 +626,7 @@ namespace QobuzDownloaderX
 
                     // Set user-provided app_secret
                     app_secret = appSecretTextBox.Text;
-                    logger.Info("App secret: " + app_secret);
+                    logger.Debug("Application credentials obtained.");
 
                     // Re-enable login button, and send app_id & app_secret to QBDLX
                     loginButton.Invoke(new Action(() => loginButton.Enabled = true));
@@ -697,9 +680,10 @@ namespace QobuzDownloaderX
                     deduped = captured; // fallback
                 }
 
-                string loginError = ex.ToString();
+                string loginError = SensitiveLog.Redact(ex.ToString(), password, user_auth_token, app_secret);
+                deduped = SensitiveLog.Redact(deduped, password, user_auth_token, app_secret);
                 logger.Error("Login failed, error listed below.");
-                logger.Error("Error:\r\n" + ex);
+                logger.Error("Error:\r\n" + loginError);
                 if (!string.IsNullOrWhiteSpace(deduped))
                     logger.Error("Captured output:\r\n" + deduped);
 
@@ -920,49 +904,12 @@ namespace QobuzDownloaderX
         {
             try
             {
-                // App ID
-                if (string.IsNullOrWhiteSpace(appId))
-                {
-                    Settings.Default.savedAppID = string.Empty;
-                }
-                else
-                {
-                    try
-                    {
-                        byte[] appIdBytes = Encoding.UTF8.GetBytes(appId);
-                        byte[] protectedBytes = ProtectedData.Protect(appIdBytes, null, DataProtectionScope.CurrentUser);
-
-                        Settings.Default.savedAppID = Convert.ToBase64String(protectedBytes);
-                    }
-                    catch
-                    {
-                        // Fallback: store plain text
-                        Settings.Default.savedAppID = appId;
-                        logger.Warning("App ID encryption failed, storing it as plain text.");
-                    }
-                }
-
-                // App Secret
-                if (string.IsNullOrWhiteSpace(appSecret))
-                {
-                    Settings.Default.savedSecret = string.Empty;
-                }
-                else
-                {
-                    try
-                    {
-                        byte[] appSecretBytes = Encoding.UTF8.GetBytes(appSecret);
-                        byte[] protectedBytes = ProtectedData.Protect(appSecretBytes, null, DataProtectionScope.CurrentUser);
-
-                        Settings.Default.savedSecret = Convert.ToBase64String(protectedBytes);
-                    }
-                    catch
-                    {
-                        // Fallback: store plain text
-                        Settings.Default.savedSecret = appSecret;
-                        logger.Warning("App secret encryption failed, storing it as plain text.");
-                    }
-                }
+                Settings.Default.savedAppID = CredentialProtection.Encrypt(appId,
+                    bytes => ProtectedData.Protect(bytes, null, DataProtectionScope.CurrentUser));
+                Settings.Default.savedSecret = CredentialProtection.Encrypt(appSecret,
+                    bytes => ProtectedData.Protect(bytes, null, DataProtectionScope.CurrentUser));
+                if (!string.IsNullOrEmpty(appSecret) && Settings.Default.savedSecret.Length == 0)
+                    logger.Warning("Application credentials could not be protected and were not saved.");
 
                 Settings.Default.Save();
                 logger.Info("AppId and AppSecret credentials saved successfully.");

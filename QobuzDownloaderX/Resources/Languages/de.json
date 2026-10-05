@@ -1,4 +1,6 @@
 {
+    "processed": "bearbeitet",
+    "downloadResultSummary": "Download results: succeeded {0}, failed {1}, skipped {2}",
     "TranslationCredit":            "TheParaTiger",
     "TranslationUpdatedOn":         "January 19, 2026, 09:38AM MET",
     "TranslationFont":              "Nirmala UI",

@@ -244,3 +244,6 @@ ModelManifest.xml
 
 # FAKE - F# Make
 .fake/
+
+# GitHub checks: external tool sources and build directories
+.ci-tools/

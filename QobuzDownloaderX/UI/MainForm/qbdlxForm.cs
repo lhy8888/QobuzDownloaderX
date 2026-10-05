@@ -675,6 +675,7 @@ namespace QobuzDownloaderX
                 Settings.Default.qualityFormat = format_id;
                 Settings.Default.audioType = audio_format;
                 Miscellaneous.UpdateQualitySelectButtonText(this);
+                Settings.Default.Save();
             }
         }
 
@@ -691,6 +692,7 @@ namespace QobuzDownloaderX
                 Settings.Default.qualityFormat = format_id;
                 Settings.Default.audioType = audio_format;
                 Miscellaneous.UpdateQualitySelectButtonText(this);
+                Settings.Default.Save();
             }
         }
 
@@ -707,6 +709,7 @@ namespace QobuzDownloaderX
                 Settings.Default.qualityFormat = format_id;
                 Settings.Default.audioType = audio_format;
                 Miscellaneous.UpdateQualitySelectButtonText(this);
+                Settings.Default.Save();
             }
         }
 
@@ -723,6 +726,7 @@ namespace QobuzDownloaderX
                 Settings.Default.qualityFormat = format_id;
                 Settings.Default.audioType = audio_format;
                 Miscellaneous.UpdateQualitySelectButtonText(this);
+                Settings.Default.Save();
             }
         }
 

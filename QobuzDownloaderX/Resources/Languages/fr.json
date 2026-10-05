@@ -1,4 +1,6 @@
 {
+    "processed": "traités",
+    "downloadResultSummary": "Download results: succeeded {0}, failed {1}, skipped {2}",
     "TranslationCredit":            "Greenwild",
     "TranslationUpdatedOn":         "January 25, 2026, 10:00AM UTC",
     "TranslationFont":              "Nirmala UI",

@@ -1,0 +1,14 @@
+The packaged flac.exe is built from official Xiph FLAC 1.5.0 source:
+https://github.com/xiph/flac/tree/1507800de4b70e21be71f38caa0d9079d0bc6e45
+
+The corresponding source is included as flac-1.5.0-source.zip. Copyright and
+license notices are in COPYING.GPL, COPYING.LGPL, COPYING.Xiph and COPYING.FDL.
+
+To rebuild with CMake and Visual Studio 2022 C++ build tools, extract the source
+into a directory named flac-source, then run:
+
+cmake -S flac-source -B flac-build -DBUILD_CXXLIBS=OFF -DBUILD_EXAMPLES=OFF -DBUILD_DOCS=OFF -DBUILD_TESTING=OFF -DWITH_OGG=OFF -DBUILD_SHARED_LIBS=OFF -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded
+cmake --build flac-build --config Release --target flacapp --parallel 2
+
+The CI workflow uses these same commands. Source extraction and building are
+not needed to run the packaged application.

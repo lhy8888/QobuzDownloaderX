@@ -45,6 +45,7 @@ namespace QobuzDownloaderX.Helpers
 
         private void WriteLog(string level, string message)
         {
+            message = SensitiveLog.Redact(message);
             var logMessage = $"[{DateTime.Now}] [{level}] {message}";
 
             lock (_lock) // Thread-safety

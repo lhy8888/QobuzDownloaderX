@@ -1,4 +1,6 @@
 ﻿{
+    "processed": "işlendi",
+    "downloadResultSummary": "Download results: succeeded {0}, failed {1}, skipped {2}",
     "TranslationCredit":            "bleedfed",
     "TranslationUpdatedOn":         "January 19, 2026, 01:256PM UTC",
     "TranslationFont":              "Segoe UI",

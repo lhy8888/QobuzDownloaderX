@@ -373,7 +373,8 @@ namespace QobuzDownloaderX.Helpers
 
         // Default English translation if no files are avaialble
         public const string defaultLanguage = @"{
-{
+    ""processed"": ""processed"",
+    ""downloadResultSummary"": ""Download results: succeeded {0}, failed {1}, skipped {2}"",
     ""TranslationCredit"":            ""AiiR"",
     ""TranslationUpdatedOn"":         ""January 19, 2026, 03:16PM EST"",
     ""TranslationFont"":              ""Nirmala UI"",
@@ -643,9 +644,13 @@ namespace QobuzDownloaderX.Helpers
             }
         }
 
+        private static readonly Dictionary<string, string> fallbackDictionary = JsonConvert.DeserializeObject<Dictionary<string, string>>(defaultLanguage);
+
         public string GetTranslation(string key)
         {
-            return languageDictionary.ContainsKey(key) ? languageDictionary[key] : key;
+            if (languageDictionary.ContainsKey(key)) return languageDictionary[key];
+            // Older downloaded language packs may not yet include new result keys.
+            return fallbackDictionary.TryGetValue(key, out var text) ? text : key;
         }
 
         public void UpdateControlFont(Control.ControlCollection controls, string fontName)

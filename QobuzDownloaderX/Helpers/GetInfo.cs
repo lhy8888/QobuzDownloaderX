@@ -2,19 +2,25 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.IO;
+using System.Threading;
 
 namespace QobuzDownloaderX.Helpers
 {
     internal sealed class GetInfo
     {
-        public Service QoService = new Service();
+        public ReliableQobuzService QoService;
+        private readonly bool silent;
+        public GetInfo(CancellationToken token = default(CancellationToken), bool silent = false)
+        { QoService = new ReliableQobuzService(token); this.silent = silent; }
+        internal GetInfo(ReliableQobuzService service) { QoService = service; silent = true; }
         public User QoUser = new User();
-        public Artist QoArtist = new Artist();
-        public Album QoAlbum = new Album();
-        public Item QoItem = new Item();
-        public Favorites QoFavorites = new Favorites();
-        public Playlist QoPlaylist = new Playlist();
-        public QopenAPI.Label QoLabel = new QopenAPI.Label();
+        public Artist QoArtist;
+        public Album QoAlbum;
+        public Item QoItem;
+        public Favorites QoFavorites;
+        public Playlist QoPlaylist;
+        public QopenAPI.Label QoLabel;
 
         public string outputText { get; set; }
 
@@ -57,9 +63,9 @@ namespace QobuzDownloaderX.Helpers
             }
             catch (Exception ex)
             {
-                updateDownloadOutput("\r\n" + ex.ToString());
-                qbdlxForm._qbdlxForm.logger.Error("Failed to fetch artist release types IDs, error below:\r\n" + ex);
-                return new HashSet<string>();
+                updateDownloadOutput("\r\nQuery failed: " + ex.GetType().Name);
+                qbdlxForm._qbdlxForm.logger.Error("Failed to fetch artist release types IDs, error below:\r\n" + ex.GetType().Name);
+                throw;
             }
         }
 
@@ -81,7 +87,7 @@ namespace QobuzDownloaderX.Helpers
                 if (QoArtist == null || QoArtist.Albums == null || QoArtist.Albums.Items == null)
                 {
                     qbdlxForm._qbdlxForm.logger.Warning("Artist has no albums or retrieval failed.");
-                    return QoArtist; // return what we have (possibly null)
+                    throw new InvalidDataException("Artist data is missing.");
                 }
 
                 var allItems = QoArtist.Albums.Items.Cast<object>().ToList();
@@ -104,6 +110,8 @@ namespace QobuzDownloaderX.Helpers
                     if (offset > 100000) break;
                 }
 
+                EnsureComplete(allItems.Count, total);
+                EnsureUnique(allItems.Cast<Item>());
                 string selectedTypes = Miscellaneous.GetCheckedDownloadFromArtistTypes();
                 if (selectedTypes == "all")
                 {
@@ -125,9 +133,9 @@ namespace QobuzDownloaderX.Helpers
             }
             catch (Exception getArtistInfoEx)
             {
-                updateDownloadOutput("\r\n" + getArtistInfoEx.ToString());
-                qbdlxForm._qbdlxForm.logger.Error("Failed to get artist info, error below:\r\n" + getArtistInfoEx);
-                return null;
+                updateDownloadOutput("\r\nQuery failed: " + getArtistInfoEx.GetType().Name);
+                qbdlxForm._qbdlxForm.logger.Error("Failed to get artist info, error below:\r\n" + getArtistInfoEx.GetType().Name);
+                throw;
             }
         }
 
@@ -145,7 +153,7 @@ namespace QobuzDownloaderX.Helpers
                 QoLabel = QoService.LabelGetWithAuth(app_id, label_id, "albums", user_auth_token, limit, offset);
 
                 if (QoLabel == null || QoLabel.Albums == null || QoLabel.Albums.Items == null)
-                    return QoLabel;
+                    throw new InvalidDataException("Label data is missing.");
 
                 // Store all collected items here
                 var allItems = QoLabel.Albums.Items.Cast<object>().ToList();
@@ -172,14 +180,16 @@ namespace QobuzDownloaderX.Helpers
                     if (offset > 100000) break; // safety cutoff
                 }
 
+                EnsureComplete(allItems.Count, total);
+                EnsureUnique(allItems.Cast<Item>());
                 QoLabel.Albums.Items = allItems.Cast<Item>().ToList();
                 return QoLabel;
             }
             catch (Exception getLabelInfoEx)
             {
-                updateDownloadOutput("\r\n" + getLabelInfoEx.ToString());
-                qbdlxForm._qbdlxForm.logger.Error("Failed to get label info, error below:\r\n" + getLabelInfoEx);
-                return null;
+                updateDownloadOutput("\r\nQuery failed: " + getLabelInfoEx.GetType().Name);
+                qbdlxForm._qbdlxForm.logger.Error("Failed to get label info, error below:\r\n" + getLabelInfoEx.GetType().Name);
+                throw;
             }
         }
 
@@ -250,6 +260,8 @@ namespace QobuzDownloaderX.Helpers
                     if (offset > 1000000) break;
                 }
 
+                EnsureComplete(allItems.Count, total);
+                EnsureUnique(allItems.Cast<Item>());
                 if (type == "albums")
                     QoFavorites.Albums.Items = allItems.Cast<Item>().ToList();
                 else if (type == "tracks")
@@ -261,84 +273,19 @@ namespace QobuzDownloaderX.Helpers
             }
             catch (Exception getFavoritesInfoEx)
             {
-                updateDownloadOutput("\r\n" + getFavoritesInfoEx.ToString());
-                qbdlxForm._qbdlxForm.logger.Error("Failed to get favorites info, error below:\r\n" + getFavoritesInfoEx);
-                return null;
+                updateDownloadOutput("\r\nQuery failed: " + getFavoritesInfoEx.GetType().Name);
+                qbdlxForm._qbdlxForm.logger.Error("Failed to get favorites info, error below:\r\n" + getFavoritesInfoEx.GetType().Name);
+                throw;
             }
         }
 
         public Item getTrackInfoLabels(string app_id, string track_id, string user_auth_token)
         {
-            try
-            {
-                // Grab track info with auth
-                outputText = null;
-                qbdlxForm._qbdlxForm.logger.Debug("Getting track Info…");
-                QoItem = QoService.TrackGetWithAuth(app_id, track_id, user_auth_token);
-
-                if (QoItem != null)
-                {
-                    if (QoItem.Album != null)
-                    {
-                        string album_id = QoItem.Album.Id;
-
-                        // Pagination variables
-                        int limit = 500;
-                        int offset = 0;
-
-                        // 1) First request (initial page)
-                        QoAlbum = QoService.AlbumGetWithAuth(app_id, album_id, user_auth_token, limit, offset);
-
-                        if (QoAlbum == null || QoAlbum.Tracks == null || QoAlbum.Tracks.Items == null)
-                        {
-                            QoAlbum = null;
-                            qbdlxForm._qbdlxForm.logger.Warning("Album has no associated tracks or album retrieval failed.");
-                        }
-                        else
-                        {
-                            var allItems = QoAlbum.Tracks.Items.Cast<object>().ToList();
-                            int total = QoAlbum.Tracks.Total;
-
-                            offset += limit;
-
-                            // 2) Pagination loop
-                            while (allItems.Count < total)
-                            {
-                                var page = QoService.AlbumGetWithAuth(app_id, album_id, user_auth_token, limit, offset);
-
-                                if (page == null || page.Tracks == null || page.Tracks.Items == null || page.Tracks.Items.Count == 0)
-                                    break;
-
-                                allItems.AddRange(page.Tracks.Items.Cast<object>());
-                                offset += limit;
-
-                                // Safety break to prevent infinite loop
-                                if (offset > 100000) break;
-                            }
-
-                            QoAlbum.Tracks.Items = allItems.Cast<Item>().ToList();
-                        }
-                    }
-                    else
-                    {
-                        QoAlbum = null;
-                        qbdlxForm._qbdlxForm.logger.Warning("Track has no associated album.");
-                    }
-                }
-                else
-                {
-                    QoAlbum = null;
-                    qbdlxForm._qbdlxForm.logger.Warning("No track information was retrieved.");
-                }
-
-                return QoItem;
-            }
-            catch (Exception getTrackInfoLabelsEx)
-            {
-                updateDownloadOutput("\r\n" + getTrackInfoLabelsEx.ToString());
-                qbdlxForm._qbdlxForm.logger.Error("Failed to get track info, error below:\r\n" + getTrackInfoLabelsEx);
-                return null;
-            }
+            QoItem = QoService.TrackGetWithAuth(app_id, track_id, user_auth_token);
+            if (QoItem?.Album?.Id == null) throw new InvalidDataException("Track album data is missing.");
+            // A single track needs album tags/counts, not a fresh download of the album's entire track list.
+            QoAlbum = QoService.AlbumGetWithAuth(app_id, QoItem.Album.Id, user_auth_token, limit: 1);
+            return QoItem;
         }
 
         public Album getAlbumInfoLabels(string app_id, string album_id, string user_auth_token)
@@ -359,7 +306,7 @@ namespace QobuzDownloaderX.Helpers
                 if (QoAlbum == null || QoAlbum.Tracks == null || QoAlbum.Tracks.Items == null)
                 {
                     qbdlxForm._qbdlxForm.logger.Warning("Album has no tracks or retrieval failed.");
-                    return QoAlbum; // Return whatever we got, possibly null
+                    throw new InvalidDataException("Album data is missing.");
                 }
 
                 var allItems = QoAlbum.Tracks.Items.Cast<object>().ToList();
@@ -382,14 +329,16 @@ namespace QobuzDownloaderX.Helpers
                     if (offset > 100000) break;
                 }
 
+                EnsureComplete(allItems.Count, total);
+                EnsureUnique(allItems.Cast<Item>());
                 QoAlbum.Tracks.Items = allItems.Cast<Item>().ToList();
                 return QoAlbum;
             }
             catch (Exception getAlbumInfoLabelsEx)
             {
-                updateDownloadOutput("\r\n" + getAlbumInfoLabelsEx.ToString());
-                qbdlxForm._qbdlxForm.logger.Error("Failed to get album info, error below:\r\n" + getAlbumInfoLabelsEx);
-                return null;
+                updateDownloadOutput("\r\nQuery failed: " + getAlbumInfoLabelsEx.GetType().Name);
+                qbdlxForm._qbdlxForm.logger.Error("Failed to get album info, error below:\r\n" + getAlbumInfoLabelsEx.GetType().Name);
+                throw;
             }
         }
 
@@ -407,7 +356,7 @@ namespace QobuzDownloaderX.Helpers
                 QoPlaylist = QoService.PlaylistGetWithAuth(app_id, user_auth_token, playlist_id, "tracks", limit, offset);
 
                 if (QoPlaylist == null || QoPlaylist.Tracks == null || QoPlaylist.Tracks.Items == null)
-                    return QoPlaylist;
+                    throw new InvalidDataException("Playlist data is missing.");
 
                 var allItems = QoPlaylist.Tracks.Items.Cast<object>().ToList();
 
@@ -432,19 +381,35 @@ namespace QobuzDownloaderX.Helpers
                     if (offset > 1000000) break;
                 }
 
+                EnsureComplete(allItems.Count, total);
+                if (allItems.Cast<Item>().Select(i => i.Position).Distinct().Count() != allItems.Count)
+                    throw new InvalidDataException("Playlist positions are duplicated.");
                 QoPlaylist.Tracks.Items = allItems.Cast<Item>().ToList();
                 return QoPlaylist;
             }
             catch (Exception getPlaylistInfoLabelsEx)
             {
-                updateDownloadOutput("\r\n" + getPlaylistInfoLabelsEx.ToString());
-                qbdlxForm._qbdlxForm.logger.Error("Failed to get playlist info, error below:\r\n" + getPlaylistInfoLabelsEx);
-                return null;
+                updateDownloadOutput("\r\nQuery failed: " + getPlaylistInfoLabelsEx.GetType().Name);
+                qbdlxForm._qbdlxForm.logger.Error("Failed to get playlist info, error below:\r\n" + getPlaylistInfoLabelsEx.GetType().Name);
+                throw;
             }
+        }
+
+        private static void EnsureUnique(IEnumerable<Item> items)
+        {
+            var ids = items.Select(i => i?.Id?.ToString()).ToList();
+            if (ids.Any(string.IsNullOrEmpty) || ids.Distinct().Count() != ids.Count)
+                throw new InvalidDataException("The service returned duplicate or missing item identities.");
+        }
+
+        private static void EnsureComplete(int count, int total)
+        {
+            if (count != total) throw new InvalidDataException("The service returned an incomplete item list.");
         }
 
         public void updateDownloadOutput(string text)
         {
+            if (silent) return;
             if (outputText == "Test String" | outputText == null)
             {
                 Miscellaneous.update(qbdlxForm._qbdlxForm, null);

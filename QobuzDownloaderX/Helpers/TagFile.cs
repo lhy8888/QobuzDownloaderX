@@ -52,9 +52,9 @@ namespace QobuzDownloaderX
 
             if (Settings.Default.trackTag) file.Tag.Track = (uint)QoItem.TrackNumber;
             if (Settings.Default.isrcTag) customTags.SetField("ISRC", QoItem.ISRC);
-            if (Settings.Default.typeTag) customTags.SetField("MEDIATYPE", QoAlbum.ProductType.ToUpper());
+            if (Settings.Default.typeTag) customTags.SetField("MEDIATYPE", (QoAlbum.ProductType ?? "").ToUpperInvariant());
             if (Settings.Default.upcTag) customTags.SetField("BARCODE", QoAlbum.UPC);
-            if (Settings.Default.labelTag) customTags.SetField("LABEL", RenameTemplates.spacesRegex.Replace(QoAlbum.Label.Name, " "));
+            if (Settings.Default.labelTag) customTags.SetField("LABEL", RenameTemplates.spacesRegex.Replace(QoAlbum.Label?.Name ?? "", " "));
             if (Settings.Default.explicitTag) customTags.SetField("ITUNESADVISORY", QoItem.ParentalWarning ? "1" : "0");
 
             if (Settings.Default.commentTag && !string.IsNullOrEmpty(Settings.Default.commentText))
@@ -81,7 +81,7 @@ namespace QobuzDownloaderX
             if (Settings.Default.releaseDateTag || Settings.Default.yearTag)
             {
                 string releaseDate = !string.IsNullOrWhiteSpace(QoItem?.ReleaseDateOriginal) ? QoItem.ReleaseDateOriginal : QoAlbum?.ReleaseDateOriginal;
-                releaseDate = releaseDate.Trim();
+                releaseDate = releaseDate?.Trim();
 
                 if (!string.IsNullOrEmpty(releaseDate))
                 {
@@ -104,8 +104,8 @@ namespace QobuzDownloaderX
             if (Settings.Default.upcTag) UserTextInformationFrame.Get(mp3Tag, "BARCODE", true).Text = new[] { QoAlbum.UPC };
             if (Settings.Default.explicitTag) UserTextInformationFrame.Get(mp3Tag, "ITUNESADVISORY", true).Text = new[] { QoItem.ParentalWarning ? "1" : "0" };
             if (Settings.Default.isrcTag) mp3Tag.SetTextFrame("TSRC", QoItem.ISRC);
-            if (Settings.Default.labelTag) mp3Tag.SetTextFrame("TPUB", RenameTemplates.spacesRegex.Replace(QoAlbum.Label.Name, " "));
-            if (Settings.Default.typeTag) mp3Tag.SetTextFrame("TMED", CultureInfo.CurrentCulture.TextInfo.ToTitleCase(QoAlbum.ProductType.ToLower()));
+            if (Settings.Default.labelTag) mp3Tag.SetTextFrame("TPUB", RenameTemplates.spacesRegex.Replace(QoAlbum.Label?.Name ?? "", " "));
+            if (Settings.Default.typeTag) mp3Tag.SetTextFrame("TMED", CultureInfo.CurrentCulture.TextInfo.ToTitleCase((QoAlbum.ProductType ?? "").ToLowerInvariant()));
 
             if (Settings.Default.commentTag && !string.IsNullOrEmpty(Settings.Default.commentText))
             {
@@ -146,14 +146,13 @@ namespace QobuzDownloaderX
             if (Settings.Default.releaseDateTag || Settings.Default.yearTag)
             {
                 string releaseDate = !string.IsNullOrWhiteSpace(QoItem?.ReleaseDateOriginal) ? QoItem.ReleaseDateOriginal : QoAlbum?.ReleaseDateOriginal;
-                releaseDate = releaseDate.Trim();
+                releaseDate = releaseDate?.Trim();
 
                 if (!string.IsNullOrEmpty(releaseDate))
                 {
                     if (Settings.Default.yearTag && (releaseDate.Length >= 4))
                     {
-                        uint yearOnly = uint.Parse(releaseDate.Substring(0, 4));
-                        mp3Tag.Year = yearOnly;
+                        if (uint.TryParse(releaseDate.Substring(0, 4), out uint yearOnly)) mp3Tag.Year = yearOnly;
                     }
 
                     if (Settings.Default.releaseDateTag)
@@ -167,8 +166,8 @@ namespace QobuzDownloaderX
 
         private static void SetCommonTags(TagLib.File file, Album QoAlbum, Item QoItem)
         {
-            if (Settings.Default.genreTag) file.Tag.Genres = new[] { QoAlbum.Genre.Name };
-            if (Settings.Default.albumTag) file.Tag.Album = QoAlbum.Version == null ? QoAlbum.Title : $"{QoAlbum.Title.TrimEnd()} ({QoAlbum.Version})";
+            if (Settings.Default.genreTag) file.Tag.Genres = new[] { QoAlbum.Genre?.Name ?? "" };
+            if (Settings.Default.albumTag) file.Tag.Album = QoAlbum.Version == null ? QoAlbum.Title : $"{QoAlbum.Title?.TrimEnd()} ({QoAlbum.Version})";
             if (Settings.Default.composerTag) file.Tag.Composers = new[] { QoItem.Composer?.Name };
             if (Settings.Default.totalTracksTag) file.Tag.TrackCount = (uint)QoAlbum.TracksCount;
             if (Settings.Default.discTag) file.Tag.Disc = (uint)QoItem.MediaNumber;
@@ -179,7 +178,7 @@ namespace QobuzDownloaderX
             {
                 string titleFormatted = QoItem.Version == null
                                         ? QoItem.Title
-                                        : $"{QoItem.Title.TrimEnd()} ({QoItem.Version})";
+                                        : $"{QoItem.Title?.TrimEnd()} ({QoItem.Version})";
                 titleFormatted = RenameTemplates.repeatedParenthesesRegex.Replace(titleFormatted, "($1)");
 
                 bool isExplicit = QoItem.ParentalWarning;
@@ -242,7 +241,7 @@ namespace QobuzDownloaderX
 
             if (Settings.Default.artistTag)
             {
-                if (Settings.Default.mergeArtistNames)
+                if (Settings.Default.mergeArtistNames && QoAlbum.Artists != null)
                 {
                     string performerNames = ParsingHelper.GetTrackPerformersName(QoItem);
                     file.Tag.Performers = new string[] { performerNames };
@@ -256,14 +255,14 @@ namespace QobuzDownloaderX
         {
             if (!Settings.Default.albumArtistTag) return;
 
-            if (Settings.Default.mergeArtistNames)
+            if (Settings.Default.mergeArtistNames && QoAlbum.Artists != null)
             {
                 string[] AlbumArtists = ParsingHelper.GetAlbumArtistsNames(QoAlbum);
                 file.Tag.AlbumArtists = AlbumArtists;
             } else
             {
-                var mainArtists = QoAlbum.Artists.Where(a => a.Roles.Contains("main-artist")).ToList();
-                if (mainArtists.Count > 1)
+                var mainArtists = QoAlbum.Artists?.Where(a => a.Roles != null && a.Roles.Contains("main-artist")).ToList();
+                if (mainArtists != null && mainArtists.Count > 1)
                 {
                     var allButLastArtist = string.Join(", ", mainArtists.Take(mainArtists.Count - 1).Select(a => a.Name));
                     var lastArtist = mainArtists.Last().Name;
@@ -271,13 +270,13 @@ namespace QobuzDownloaderX
                     return;
                 }
 
-                file.Tag.AlbumArtists = new[] { QoAlbum.Artist.Name };
+                file.Tag.AlbumArtists = new[] { QoAlbum.Artist?.Name ?? "" };
             }
         }
 
         private static void EmbedArtwork(TagLib.File file, string artworkPath)
         {
-            if (!Settings.Default.imageTag) return;
+            if (!Settings.Default.imageTag || string.IsNullOrEmpty(artworkPath)) return;
             try
             {
                 qbdlxForm._qbdlxForm.logger.Debug("Attempting to embed artwork");

@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net8.0</TargetFramework><EnableDefaultCompileItems>false</EnableDefaultCompileItems></PropertyGroup>
+  <ItemGroup>
+    <Compile Include="Program.cs" />
+    <Compile Include="../Shared/CheckReport.cs" Link="CheckReport.cs" />
+    <Compile Include="../../QobuzDownloaderX/Helpers/PaddingNumbers.cs" Link="PaddingNumbers.cs" />
+    <Compile Include="../../QobuzDownloaderX/Helpers/Download/ReliableHttp.cs" Link="ReliableHttp.cs" />
+    <Compile Include="../../QobuzDownloaderX/Helpers/Download/ReliableQobuzService.cs" Link="ReliableQobuzService.cs" />
+    <Compile Include="../../QobuzDownloaderX/Helpers/Download/IsolatedRequest.cs" Link="IsolatedRequest.cs" />
+    <Compile Include="../../QobuzDownloaderX/Helpers/Download/AudioVerification.cs" Link="AudioVerification.cs" />
+    <Compile Include="../../QobuzDownloaderX/Helpers/Download/DownloadPaths.cs" Link="DownloadPaths.cs" />
+    <Compile Include="../../QobuzDownloaderX/Helpers/Download/DownloadStats.cs" Link="DownloadStats.cs" />
+    <Compile Include="../../QobuzDownloaderX/Helpers/Download/CredentialProtection.cs" Link="CredentialProtection.cs" />
+    <Compile Include="../../QobuzDownloaderX/Helpers/Download/SensitiveLog.cs" Link="SensitiveLog.cs" />
+    <Compile Include="../../QobuzDownloaderX/Helpers/FixMD5.cs" Link="FixMD5.cs" />
+    <Compile Include="../../QobuzDownloaderX/Helpers/GetInfo.cs" Link="GetInfo.cs" />
+    <Reference Include="QopenAPI"><HintPath>../../QobuzDownloaderX/External References/Qo(penAPI).dll</HintPath></Reference>
+    <PackageReference Include="Newtonsoft.Json" Version="[13.0.4]" />
+    <PackageReference Include="taglib" Version="[2.1.0]" />
+    <None Include="Fixtures/*" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>

@@ -37,3 +37,4 @@ using System.Runtime.InteropServices;
 [assembly: AssemblyVersion("1.2.0.5")]
 [assembly: AssemblyFileVersion("1.2.0.5")]
 [assembly: NeutralResourcesLanguage("en")]
+[assembly: InternalsVisibleTo("WindowsChecks")]

@@ -1,4 +1,6 @@
 ﻿{
+    "processed": "обработано",
+    "downloadResultSummary": "Download results: succeeded {0}, failed {1}, skipped {2}",
     "TranslationCredit":            "Kuzmich55 (https://github.com/Kuzmich55)",
     "TranslationUpdatedOn":         "January 19, 2026, 04:14PM MSK",
     "TranslationFont":              "Segoe UI",
