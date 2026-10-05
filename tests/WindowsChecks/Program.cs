@@ -203,7 +203,9 @@ internal static class Program
             string directory = Path.Combine(temporary, "长目录 " + new string('d', 90)); Directory.CreateDirectory(directory);
             string path = AudioVerification.IdentityPath(Path.Combine(directory, new string('歌', 250) + "😀.flac"), Track(), "27", quality);
             Check(path.Length > 260 && Path.GetFileName(path).Length + " (100000)".Length + AudioVerification.ReceiptExtension.Length <= 255);
-            File.Copy(Fixture(".flac"), path); TagFile.WriteToFile(path, null, Album(), Track()); Validate(path);
+            File.Copy(Fixture(".flac"), path); TagFile.WriteToFile(path, null, Album(), Track());
+            byte[] original = File.ReadAllBytes(path); Validate(path);
+            Check(original.SequenceEqual(File.ReadAllBytes(path)), "Long path verification rewrote valid audio");
             AudioVerification.SaveReceipt(path, Track(), "27", quality); AudioVerification.SaveReceipt(path, Track(), "27", quality);
             Check(AudioVerification.CanSkip(path, Track(), "27", quality));
             string replacement = Miscellaneous.GetDuplicateFileName(path);
@@ -211,6 +213,17 @@ internal static class Program
             AudioVerification.SaveReceipt(replacement, Track(), "27", quality);
             Check(AudioVerification.CanSkipAnyVerifiedCopy(path, Track(), "27", quality));
             Check(!Directory.EnumerateFiles(directory, "*.tmp").Any());
+        });
+        Add("an unset MD5 on a long Chinese path is repaired and verified before replacement", () =>
+        {
+            string directory = Path.Combine(temporary, "修复目录 " + new string('d', 90)); Directory.CreateDirectory(directory);
+            string path = AudioVerification.IdentityPath(Path.Combine(directory, new string('歌', 250) + ".flac"), Track(2), "27", quality);
+            byte[] data = File.ReadAllBytes(Fixture(".flac")); byte[] audioMd5 = data.Skip(26).Take(16).ToArray();
+            Check(audioMd5.Any(value => value != 0)); Array.Clear(data, 26, 16); File.WriteAllBytes(path, data);
+            new FixMD5(Environment.GetEnvironmentVariable("QBDLX_TEST_FLAC")).ValidateAsync(path, true, CancellationToken.None).GetAwaiter().GetResult();
+            Check(audioMd5.SequenceEqual(File.ReadAllBytes(path).Skip(26).Take(16)), "Decoded audio identity changed during repair");
+            Validate(path); AudioVerification.Inspect(path, Track(2), quality);
+            Check(!Directory.EnumerateFiles(directory, ".qbdlx-md5-*.flac").Any());
         });
         Add("a locked Windows destination cannot be reported as a successful write", () =>
         {
