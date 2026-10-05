@@ -382,7 +382,7 @@ namespace QobuzDownloaderX.Helpers
         {
             // Set saved language
             f.languageManager = new LanguageManager();
-            f.languageManager.LoadLanguage($"languages/{Settings.Default.currentLanguage.ToLower()}.json");
+            f.languageManager.LoadLanguage(Path.Combine(f.languageManager.languagesDirectory, Settings.Default.currentLanguage.ToLowerInvariant() + ".json"));
 
             // Populate theme options in settings
             f.languageManager.PopulateLanguageComboBox(f);
@@ -1174,7 +1174,7 @@ namespace QobuzDownloaderX.Helpers
                 if (!batchItem && stats.Failed > 0) f.downloadOutput.AppendText("\r\n" + string.Join("\r\n", stats.Failures));
                 f.qualitySelectPanel.Enabled = !qbdlxForm.isBatchDownloadRunning;
                 f.skipButton.Enabled = false;
-                f.abortButton.Enabled = false;
+                f.abortButton.Enabled = qbdlxForm.isBatchDownloadRunning;
                 f.batchDownloadSelectedRowsButton.Enabled = !qbdlxForm.isBatchDownloadRunning && SearchPanelHelper.selectedRowindices.Any();
                 f.inputTextBox.Enabled = !qbdlxForm.isBatchDownloadRunning;
                 f.downloadButton.Enabled = !qbdlxForm.isBatchDownloadRunning;
@@ -1212,6 +1212,8 @@ namespace QobuzDownloaderX.Helpers
             finally
             {
                 qbdlxForm.isBatchDownloadRunning = false;
+                f.abortButton.Enabled = false;
+                f.skipButton.Enabled = false;
                 f.inputTextBox.Enabled = true;
                 f.qualitySelectPanel.Enabled = true;
                 f.downloadButton.Enabled = true;

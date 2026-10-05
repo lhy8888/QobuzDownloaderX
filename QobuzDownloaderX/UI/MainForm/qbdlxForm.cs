@@ -180,7 +180,7 @@ namespace QobuzDownloaderX
             // Create new log file
             Directory.CreateDirectory("logs");
 
-            logger = new BufferedLogger("logs\\QobuzDLX " + DateTime.Now.ToString("yyyy⧸MM⧸dd HH꞉mm꞉ss") + ".log");
+            logger = new BufferedLogger("logs\\QobuzDLX " + DateTime.Now.ToString("yyyy⧸MM⧸dd HH꞉mm꞉ss") + " " + Guid.NewGuid().ToString("N") + ".log");
             logger.Debug("Logger started, QBDLX form initialized!");
 
             InitializeComponent();
@@ -242,7 +242,7 @@ namespace QobuzDownloaderX
 
             Miscellaneous.CenterLeftAlignedRichTextBoxText(userInfoTextBox);
 
-            downloadOutput.AppendText(QoUser.UserInfo.Credential.Label == null
+            downloadOutput.AppendText(QoUser?.UserInfo?.Credential?.Label == null
                 ? $"\r\n\r\n{downloadOutputExpired}\r\n\r\n{downloadOutputPath}\r\n{folderBrowser.SelectedPath}"
                 : $"\r\n\r\n{downloadOutputPath}\r\n{folderBrowser.SelectedPath}");
 
@@ -263,7 +263,15 @@ namespace QobuzDownloaderX
         private async void qbdlxForm_FormClosing(object sender, FormClosingEventArgs e)
         {
             logger.Debug($"Triggered form closing with reason: {e.CloseReason}");
-            if (getLinkTypeIsBusy)
+            // Application.Exit has already begun closing all windows. Calling
+            // it again from this event can re-enter the closing sequence.
+            if (e.CloseReason == CloseReason.ApplicationExitCall)
+            {
+                abortTokenSource?.Cancel();
+                logger?.Dispose();
+                return;
+            }
+            if (getLinkTypeIsBusy || isBatchDownloadRunning)
             {
                 if (e.CloseReason == CloseReason.UserClosing)
                 {
@@ -279,18 +287,18 @@ namespace QobuzDownloaderX
                     }
                     else
                     {
-                        if (getLinkTypeIsBusy)
+                        if (getLinkTypeIsBusy || isBatchDownloadRunning)
                         {
                             e.Cancel = true;
                             logger.Debug($"Form closing delayed/cancelled because {nameof(getLinkTypeIsBusy)} is {getLinkTypeIsBusy}");
-                            abortButton.PerformClick();
+                            abortTokenSource?.Cancel();
 
                             // Short delay before exiting the application to try allow any current file download to finish/move safely.
                             int maxWaitMilliseconds = 3000;
                             int waitedMilliseconds = 0;
                             int stepMilliseconds = 100;
 
-                            while (getLinkTypeIsBusy && (waitedMilliseconds < maxWaitMilliseconds))
+                            while ((getLinkTypeIsBusy || isBatchDownloadRunning) && (waitedMilliseconds < maxWaitMilliseconds))
                             {
                                 await Task.Delay(stepMilliseconds);
                                 waitedMilliseconds += stepMilliseconds;
@@ -301,7 +309,7 @@ namespace QobuzDownloaderX
                 }
             }
             logger?.Dispose();
-            Application.Exit(); // Triggers 'qbdlxForm_FormClosing' with CloseReason.ApplicationExitCall
+            Application.Exit();
         }
 
         private void qualitySelectButton_Click(object sender, EventArgs e)
@@ -462,7 +470,7 @@ namespace QobuzDownloaderX
         {
             abortButton.Enabled = false;
             skipButton.Enabled = false;
-            if (getLinkTypeIsBusy && abortTokenSource != null)
+            if ((getLinkTypeIsBusy || isBatchDownloadRunning) && abortTokenSource != null)
             {
                 logger.Debug("abortTokenSource cancel request by user.");
                 abortTokenSource.Cancel();

@@ -63,6 +63,8 @@ namespace QobuzDownloaderX.Helpers
 
     internal static class AudioVerification
     {
+        internal const string ReceiptExtension = ".qbdlx.json";
+        private const int DuplicateNameReserve = 12;
         internal static void Inspect(string path, Item track, AudioQuality quality)
         {
             using (var file = TagLib.File.Create(path))
@@ -113,7 +115,7 @@ namespace QobuzDownloaderX.Helpers
         {
             var receipt = new AudioReceipt { TrackId = track.Id.ToString(), Format = format,
                 BitDepth = quality.BitDepth, SampleRate = quality.SampleRate, Sha256 = Hash(path) };
-            string temporary = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
+            string temporary = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(path)), ".qbdlx-receipt-" + Guid.NewGuid().ToString("N") + ".tmp");
             try
             {
                 File.WriteAllText(temporary, JsonConvert.SerializeObject(receipt));
@@ -126,7 +128,7 @@ namespace QobuzDownloaderX.Helpers
         {
             string suffix = " [ID" + track.Id + "-F" + format + (quality.IsFlac ? "-" + quality.BitDepth + "bit-" + quality.SampleRate + "Hz" : "-320kbps") + "]";
             string ext = Path.GetExtension(path);
-            string name = DownloadPaths.Truncate(Path.GetFileNameWithoutExtension(path), (ext.Length + suffix.Length));
+            string name = DownloadPaths.Truncate(Path.GetFileNameWithoutExtension(path), ext.Length + suffix.Length + ReceiptExtension.Length + DuplicateNameReserve);
             return Path.Combine(Path.GetDirectoryName(path), name + suffix + ext);
         }
     }

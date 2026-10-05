@@ -24,6 +24,7 @@ namespace QobuzDownloaderX
         readonly BufferedLogger logger = qbdlxForm._qbdlxForm.logger;
         readonly Service QoService = new Service();
         User QoUser;
+        private bool useTokenLogin;
 
         public string currentVersion { get; set; }
         public string newVersion { get; set; }
@@ -57,6 +58,7 @@ namespace QobuzDownloaderX
         public LoginForm()
         {
             InitializeComponent();
+            loginBackground.RunWorkerCompleted += loginBackground_RunWorkerCompleted;
         }
 
         readonly string errorLog = Path.GetDirectoryName(Application.ExecutablePath) + "\\Latest_Error.log";
@@ -112,144 +114,32 @@ namespace QobuzDownloaderX
 
         private void SetSavedValues()
         {
-            // Email/usrname
-            string savedEmail = Settings.Default.savedEmail ?? "";
-            if (!string.IsNullOrEmpty(savedEmail) && savedEmail != emailPlaceholder)
-            {
-                try
-                {
-                    byte[] encryptedEmailBytes = Convert.FromBase64String(savedEmail);
-                    byte[] decryptedEmailBytes = ProtectedData.Unprotect(encryptedEmailBytes, null, DataProtectionScope.CurrentUser);
-                    string decryptedEmail = Encoding.UTF8.GetString(decryptedEmailBytes);
-                   
-                    username = decryptedEmail;
-                    emailTextBox.Text = decryptedEmail;
-                }
-                catch (FormatException) // saved value is plain text or invalid Base64
-                {
-                    username = savedEmail;
-                    emailTextBox.Text = username;
-                }
-                catch (CryptographicException) // cannot decrypt (different machine/user)
-                {
-                    username = savedEmail;
-                    emailTextBox.Text = username;
-                    // username = "";
-                    // emailTextBox.Text = emailPlaceholder;
-                }
-            }
-            else
-            {
-                emailTextBox.Text = emailPlaceholder;
-                emailTextBox.ForeColor = ColorTranslator.FromHtml(themeManager._currentTheme.PlaceholderTextBoxText);
-            }
-
-            // Password
+            Func<byte[], byte[]> protect = bytes => ProtectedData.Protect(bytes, null, DataProtectionScope.CurrentUser);
+            Func<byte[], byte[]> unprotect = bytes => ProtectedData.Unprotect(bytes, null, DataProtectionScope.CurrentUser);
+            string email = Settings.Default.savedEmail ?? "";
             string savedPassword = Settings.Default.savedPassword ?? "";
-            if (!string.IsNullOrEmpty(savedPassword) &&
-                savedPassword != passwordPlaceholder &&
-                savedPassword != tokenPlaceholder)
-            {
-                try
-                {
-                    byte[] encryptedPasswordBytes = Convert.FromBase64String(savedPassword);
-                    byte[] decryptedPasswordBytes = ProtectedData.Unprotect(encryptedPasswordBytes, null, DataProtectionScope.CurrentUser);
-                    string decryptedPassword = Encoding.UTF8.GetString(decryptedPasswordBytes);
+            if (email == emailPlaceholder) email = "";
+            if (savedPassword == passwordPlaceholder || savedPassword == tokenPlaceholder) savedPassword = "";
+            username = CredentialProtection.Read(email, protect, unprotect, out string replacementEmail);
+            password = CredentialProtection.Read(savedPassword, protect, unprotect, out string replacementPassword);
+            app_id = CredentialProtection.Read(Settings.Default.savedAppID, protect, unprotect, out string replacementAppID);
+            app_secret = CredentialProtection.Read(Settings.Default.savedSecret, protect, unprotect, out string replacementSecret);
+            bool changed = Settings.Default.savedEmail != replacementEmail || Settings.Default.savedPassword != replacementPassword ||
+                Settings.Default.savedAppID != replacementAppID || Settings.Default.savedSecret != replacementSecret;
+            Settings.Default.savedEmail = replacementEmail;
+            Settings.Default.savedPassword = replacementPassword;
+            Settings.Default.savedAppID = replacementAppID;
+            Settings.Default.savedSecret = replacementSecret;
+            if (changed) Settings.Default.Save();
 
-                    password = decryptedPassword;
-                    passwordTextBox.Text = decryptedPassword;
-                    passwordTextBox.PasswordChar = '*';
-                    passwordTextBox.ForeColor = ColorTranslator.FromHtml(themeManager._currentTheme.TextBoxText);
-                }
-                catch (FormatException) // saved value is plain text or invalid Base64
-                {
-                    password = savedPassword;
-                    passwordTextBox.Text = savedPassword;
-                    Settings.Default.savedPassword = CredentialProtection.Encrypt(savedPassword, bytes => ProtectedData.Protect(bytes, null, DataProtectionScope.CurrentUser));
-                    Settings.Default.Save();
-                }
-                catch (CryptographicException) // cannot decrypt (different machine/user)
-                {
-                    password = string.Empty;
-                    passwordTextBox.Text = passwordPlaceholder;
-                    Settings.Default.savedPassword = string.Empty;
-                    Settings.Default.Save();
-                }
-            }
-            else
+            emailTextBox.Text = username;
+            passwordTextBox.Text = password;
+            appidTextBox.Text = app_id;
+            appSecretTextBox.Text = app_secret;
+            if (!string.IsNullOrEmpty(password))
             {
-                passwordTextBox.Text = passwordPlaceholder;
-                passwordTextBox.ForeColor = ColorTranslator.FromHtml(themeManager._currentTheme.PlaceholderTextBoxText);
-                passwordTextBox.PasswordChar = '\0';
-            }
-
-            // App ID
-            string savedAppID = Settings.Default.savedAppID ?? "";
-            if (!string.IsNullOrEmpty(savedAppID))
-            {
-                try
-                {
-                    byte[] encryptedAppIDBytes = Convert.FromBase64String(savedAppID);
-                    byte[] decryptedAppIDBytes = ProtectedData.Unprotect(encryptedAppIDBytes, null, DataProtectionScope.CurrentUser);
-                    string decryptedAppID = Encoding.UTF8.GetString(decryptedAppIDBytes);
-
-                    app_id = decryptedAppID;
-                    appidTextBox.Text = decryptedAppID;
-                }
-                catch (FormatException) // saved value is plain text or invalid Base64
-                {
-                    
-                    app_id = savedAppID;
-                    appidTextBox.Text = app_id;
-                }
-                catch (CryptographicException) // cannot decrypt (different machine/user)
-                {
-                    app_id = savedAppID;
-                    appidTextBox.Text = app_id;
-                    // app_id = "";
-                    // appidTextBox.Text = "";
-                }
-            }
-            else
-            {
-                app_id = savedAppID;
-                appidTextBox.Text = app_id;
-            }
-
-            // App Secret
-            string savedAppSecret = Settings.Default.savedSecret ?? "";
-            if (!string.IsNullOrEmpty(savedAppSecret))
-            {
-                try
-                {
-                    byte[] encryptedAppSecretBytes = Convert.FromBase64String(savedAppSecret);
-                    string decryptedAppSecret = Encoding.UTF8.GetString(
-                        ProtectedData.Unprotect(encryptedAppSecretBytes, null, DataProtectionScope.CurrentUser));
-
-                    app_secret = decryptedAppSecret;
-                    appSecretTextBox.Text = decryptedAppSecret;
-                }
-                catch (FormatException) // saved value is plain text or invalid Base64
-                {
-                    app_secret = savedAppSecret;
-                    appSecretTextBox.Text = app_secret;
-                    Settings.Default.savedSecret = CredentialProtection.Encrypt(savedAppSecret, bytes => ProtectedData.Protect(bytes, null, DataProtectionScope.CurrentUser));
-                    Settings.Default.Save();
-                }
-                catch (CryptographicException) // cannot decrypt (different machine/user)
-                {
-                    app_secret = string.Empty;
-                    appSecretTextBox.Text = string.Empty;
-                    Settings.Default.savedSecret = string.Empty;
-                    Settings.Default.Save();
-                    // app_secret = "";
-                    // appSecretTextBox.Text = "";
-                }
-            }
-            else
-            {
-                app_secret = savedAppSecret;
-                appSecretTextBox.Text = app_secret;
+                passwordTextBox.PasswordChar = '*';
+                passwordTextBox.ForeColor = ColorTranslator.FromHtml(themeManager._currentTheme.TextBoxText);
             }
 
             // Alt login handling
@@ -274,7 +164,7 @@ namespace QobuzDownloaderX
 
             if (passwordTextBox.Text == null || passwordTextBox.Text == "" || passwordTextBox.Text == "\r\n")
             {
-                passwordTextBox.Text = passwordPlaceholder;
+                passwordTextBox.Text = Settings.Default.savedAltLoginValue ? tokenPlaceholder : passwordPlaceholder;
                 passwordTextBox.ForeColor = ColorTranslator.FromHtml(themeManager._currentTheme.PlaceholderTextBoxText);
                 passwordTextBox.PasswordChar = '\0';
             }
@@ -295,7 +185,7 @@ namespace QobuzDownloaderX
         private void InitializeLanguage()
         {
             languageManager = new LanguageManager();
-            languageManager.LoadLanguage($"languages/{Settings.Default.currentLanguage.ToLower()}.json");
+            languageManager.LoadLanguage(Path.Combine(languageManager.languagesDirectory, Settings.Default.currentLanguage.ToLowerInvariant() + ".json"));
             UpdateUILanguage();
         }
 
@@ -408,7 +298,7 @@ namespace QobuzDownloaderX
             if (emailTextBox.Text == null | emailTextBox.Text == "")
             {
                 emailTextBox.ForeColor = ColorTranslator.FromHtml(themeManager._currentTheme.PlaceholderTextBoxText);
-                if (Settings.Default.savedAltLoginValue == false)
+                if (!Settings.Default.savedAltLoginValue)
                 {
                     emailTextBox.Text = emailPlaceholder;
                 }
@@ -432,7 +322,7 @@ namespace QobuzDownloaderX
             {
                 passwordTextBox.PasswordChar = '\0';
                 passwordTextBox.ForeColor = ColorTranslator.FromHtml(themeManager._currentTheme.PlaceholderTextBoxText);
-                if (Settings.Default.savedAltLoginValue == false)
+                if (!Settings.Default.savedAltLoginValue)
                 {
                     passwordTextBox.Text = passwordPlaceholder;
                 }
@@ -476,6 +366,7 @@ namespace QobuzDownloaderX
 
         private void loginButton_Click(object sender, EventArgs e)
         {
+            if (loginBackground.IsBusy) return;
             logger.Debug("Logging in…");
 
             #region Check if textboxes are valid
@@ -493,7 +384,7 @@ namespace QobuzDownloaderX
                 }
             }
 
-            if (passwordTextBox.Text == passwordPlaceholder || passwordTextBox.Text == tokenPlaceholder)
+            if (string.IsNullOrWhiteSpace(passwordTextBox.Text) || passwordTextBox.Text == passwordPlaceholder || passwordTextBox.Text == tokenPlaceholder)
             {
                 // If there's no password typed in.
                 logger.Warning("passwordTextBox does not contain proper values for logging in.");
@@ -507,6 +398,9 @@ namespace QobuzDownloaderX
             // Assign values from textboxes
             username = emailTextBox.Text;
             password = passwordTextBox.Text;
+            app_id = appidTextBox.Text;
+            app_secret = appSecretTextBox.Text;
+            useTokenLogin = Settings.Default.savedAltLoginValue;
 
             Settings.Default.savedEmail = CredentialProtection.Encrypt(username,
                 bytes => ProtectedData.Protect(bytes, null, DataProtectionScope.CurrentUser));
@@ -519,7 +413,27 @@ namespace QobuzDownloaderX
             Settings.Default.Save();
 
             logger.Debug("Starting loginBackground…");
+            loginButton.Enabled = false;
             loginBackground.RunWorkerAsync();
+        }
+
+        private void loginBackground_RunWorkerCompleted(object sender, RunWorkerCompletedEventArgs e)
+        {
+            if (IsDisposed || Disposing) return;
+            loginButton.Enabled = true;
+            if (e.Error != null)
+            {
+                loginText.Text = loginTextError;
+                logger.Error(SensitiveLog.Redact(e.Error.ToString(), password, user_auth_token, app_secret));
+                return;
+            }
+            if (!e.Cancelled && e.Result is bool succeeded && succeeded)
+            {
+                // The existing application message loop owns both windows.
+                // BackgroundWorker completion returns to that original UI thread.
+                qbdlx.Show();
+                Hide();
+            }
         }
 
         private void loginBackground_DoWork(object sender, DoWorkEventArgs e)
@@ -537,14 +451,14 @@ namespace QobuzDownloaderX
                 loginText.Invoke(new Action(() => loginText.Text = loginTextStart));
                 loginButton.Invoke(new Action(() => loginButton.Enabled = false));
 
-                if (appidTextBox.Text == null | appidTextBox.Text == "" | appSecretTextBox.Text == null | appSecretTextBox.Text == "")
+                if (string.IsNullOrEmpty(app_id) || string.IsNullOrEmpty(app_secret))
                 {
                     logger.Debug("No saved/custom app ID given, will get a new ID from Qobuz");
                     // Grab app_id & login
                     app_id = QoService.GetAppID().App_ID;
                     logger.Info("App ID: " + app_id);
 
-                    if (Settings.Default.savedAltLoginValue == false)
+                    if (!useTokenLogin)
                     {
                         logger.Debug("Logging in with e-mail and password");
                         QoUser = QoService.Login(app_id, username, password, null);
@@ -575,8 +489,7 @@ namespace QobuzDownloaderX
                     app_secret = QoService.GetAppSecret(app_id, user_auth_token).App_Secret;
                     logger.Debug("Application credentials obtained.");
 
-                    // Re-enable login button, and send app_id & app_secret to QBDLX
-                    loginButton.Invoke(new Action(() => loginButton.Enabled = true));
+                    // Send app_id & app_secret to QBDLX
                     qbdlx.app_id = app_id;
                     qbdlx.app_secret = app_secret;
                     qbdlx.user_auth_token = user_auth_token;
@@ -593,10 +506,9 @@ namespace QobuzDownloaderX
                 {
                     logger.Debug("Using saved/custom app ID and secret");
                     // Use user-provided app_id & login
-                    app_id = appidTextBox.Text;
                     logger.Info("App ID: " + app_id);
 
-                    if (Settings.Default.savedAltLoginValue == false)
+                    if (!useTokenLogin)
                     {
                         logger.Debug("Logging in with e-mail and password");
                         QoUser = QoService.Login(app_id, username, password, null);
@@ -625,11 +537,9 @@ namespace QobuzDownloaderX
                     try { qbdlx.user_avatar = QoUser.UserInfo.Avatar.Replace(@"\", null).Replace("s=50", "s=20"); } catch { logger.Warning("Attempt to grab user's avatar from API has failed. Continuing."); }
 
                     // Set user-provided app_secret
-                    app_secret = appSecretTextBox.Text;
                     logger.Debug("Application credentials obtained.");
 
-                    // Re-enable login button, and send app_id & app_secret to QBDLX
-                    loginButton.Invoke(new Action(() => loginButton.Enabled = true));
+                    // Send app_id & app_secret to QBDLX
                     qbdlx.app_id = app_id;
                     qbdlx.app_secret = app_secret;
                     qbdlx.user_auth_token = user_auth_token;
@@ -645,8 +555,7 @@ namespace QobuzDownloaderX
 
                 // Hide this window & open QBDLX
                 logger.Debug("Login successful! Hiding this form, and launching main form.");
-                this.Invoke(new Action(() => this.Hide()));
-                Application.Run(qbdlx);
+                e.Result = true;
             }
             catch (Exception ex)
             {

@@ -156,7 +156,53 @@ class Program
         Add("credential protection failure never returns plaintext",()=>Sync(()=>
         {
             Check(CredentialProtection.Encrypt("test credential",bytes=>throw new CryptographicException())=="");
-            Check(CredentialProtection.Encrypt("test credential",bytes=>new byte[]{1,2})=="AQI=");
+            Check(CredentialProtection.Encrypt("test credential",bytes=>new byte[]{1,2})==CredentialProtection.Prefix+"AQI=");
+        }));
+        Add("Base64-looking legacy passwords and keys keep their literal values",()=>Sync(()=>
+        {
+            foreach (string value in new[] { "cGFzc3dvcmQ=", "12345678", "0123456789abcdef0123456789abcdef" })
+            {
+                string read = CredentialProtection.Read(value, bytes => bytes, bytes => throw new Exception("Plaintext mistaken for ciphertext"), out string saved);
+                Check(read == value && saved.StartsWith(CredentialProtection.Prefix));
+                Check(System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(saved.Substring(CredentialProtection.Prefix.Length))) == value);
+            }
+        }));
+        Add("new protected credentials restore without repeated encryption",()=>Sync(()=>
+        {
+            string saved = CredentialProtection.Encrypt("literal password", bytes => bytes);
+            string read = CredentialProtection.Read(saved, bytes => throw new Exception("Unexpected encryption"), bytes => bytes, out string replacement);
+            Check(read == "literal password" && replacement == saved);
+        }));
+        Add("legacy DPAPI credentials receive a marker without losing the value",()=>Sync(()=>
+        {
+            byte[] header = {1,0,0,0,0xd0,0x8c,0x9d,0xdf,1,0x15,0xd1,0x11,0x8c,0x7a,0,0xc0,0x4f,0xc2,0x97,0xeb};
+            string saved = Convert.ToBase64String(header.Concat(System.Text.Encoding.UTF8.GetBytes("old secret")).ToArray());
+            string read = CredentialProtection.Read(saved, bytes => throw new Exception("Unexpected encryption"), bytes => bytes.Skip(header.Length).ToArray(), out string replacement);
+            Check(read == "old secret" && replacement == CredentialProtection.Prefix + saved);
+        }));
+        Add("unreadable protected credentials are cleared instead of reused as passwords",()=>Sync(()=>
+        {
+            foreach (string saved in new[] { CredentialProtection.Prefix + "AQI=", CredentialProtection.Prefix + "invalid!", "AQAAANCMnd8BFdERjHoAwE/Cl+s=" })
+            {
+                string read = CredentialProtection.Read(saved, bytes => throw new Exception("Unexpected encryption"), bytes => throw new CryptographicException(), out string replacement);
+                Check(read == "" && replacement == "");
+            }
+        }));
+        Add("failed legacy migration clears storage while retaining only the current input",()=>Sync(()=>
+        {
+            string read = CredentialProtection.Read("cGFzc3dvcmQ=", bytes => throw new CryptographicException(), bytes => throw new Exception(), out string replacement);
+            Check(read == "cGFzc3dvcmQ=" && replacement == "");
+        }));
+        Add("long audio names leave enough space for receipts and temporary writes",()=>Sync(()=>
+        {
+            var q = new AudioQuality { IsFlac = true, BitDepth = 16, SampleRate = 44100 };
+            string path = AudioVerification.IdentityPath(Path.Combine(Temporary, new string('a', 250) + ".flac"), Track(), "27", q);
+            Check(Path.GetFileName(path).Length + " (100000)".Length + AudioVerification.ReceiptExtension.Length <= 255);
+            File.Copy(Fixture(".flac"), path);
+            AudioVerification.SaveReceipt(path, Track(), "27", q);
+            AudioVerification.SaveReceipt(path, Track(), "27", q);
+            Check(AudioVerification.CanSkip(path, Track(), "27", q));
+            Check(!Directory.EnumerateFiles(Temporary, ".qbdlx-receipt-*.tmp").Any());
         }));
         Add("logs remove credentials and signed query parameters",()=>Sync(()=>
         {
@@ -196,6 +242,75 @@ class Program
             });
             var album=new GetInfo(new ReliableQobuzService(default,client)).getAlbumInfoLabels("test-app","album","test-auth");Check(album.Tracks.Items.Count==2&&calls==2);
         }));
+        foreach (string kind in new[] { "album", "playlist", "artist", "label", "favorite-albums", "favorite-tracks", "favorite-artists" })
+        {
+            Add(kind + " pagination follows short pages without skipping entries",()=>Sync(()=>
+            {
+                int calls = 0;
+                string list = kind == "artist" || kind == "label" ? "albums" : kind.StartsWith("favorite-") ? kind.Substring("favorite-".Length) : "tracks";
+                using var client = Client((request, token) =>
+                {
+                    int offset = int.Parse(System.Text.RegularExpressions.Regex.Match(request.RequestUri.Query, @"[?&]offset=(\d+)").Groups[1].Value);
+                    Check(offset == calls && calls < 3, "Skipped entries after a short page: " + request.RequestUri.Query);
+                    calls++;
+                    var page = new Dictionary<string, object> { ["id"] = "123", [list] = new { total = 3, items = new[] { new { id = kind == "playlist" ? 42 : offset + 1, position = offset + 1 } } } };
+                    return Ready(Response(HttpStatusCode.OK, new StringContent(JsonConvert.SerializeObject(page))));
+                });
+                var info = new GetInfo(new ReliableQobuzService(default, client));
+                List<Item> items;
+                if (kind == "album") items = info.getAlbumInfoLabels("app", "123", "auth").Tracks.Items;
+                else if (kind == "playlist") items = info.getPlaylistInfoLabels("app", "123", "auth").Tracks.Items;
+                else if (kind == "artist") items = info.getArtistInfo("app", "123", "auth").Albums.Items;
+                else if (kind == "label") items = info.getLabelInfo("app", "123", "auth").Albums.Items;
+                else
+                {
+                    var favorites = info.getFavoritesInfo("app", "123", list, "auth");
+                    items = list == "albums" ? favorites.Albums.Items : list == "tracks" ? favorites.Tracks.Items : favorites.Artists.Items;
+                }
+                Check(calls == 3 && items.Count == 3);
+                Check(items.Select(item => item.Position).SequenceEqual(new[] { 1, 2, 3 }));
+                if (kind == "playlist") Check(items.All(item => item.Id.ToString() == "42"), "Legitimate repeated playlist song rejected");
+            }));
+        }
+        Add("wrong playlist artist and label identities are rejected",async()=>
+        {
+            using var client = Client((request, token) => Ready(Response(HttpStatusCode.OK, new StringContent("{\"id\":456}"))));
+            var service = new ReliableQobuzService(default, client);
+            await Reject<InvalidDataException>(() => Sync(() => service.PlaylistGetWithAuth("app", "auth", "123", "tracks")));
+            await Reject<InvalidDataException>(() => Sync(() => service.ArtistGetWithAuth("app", "123", "auth", "albums")));
+            await Reject<InvalidDataException>(() => Sync(() => service.LabelGetWithAuth("app", "123", "albums", "auth")));
+        });
+        Add("a collection edited during pagination is not reported as complete",async()=>
+        {
+            int calls = 0;
+            using var client = Client((request, token) => Ready(Response(HttpStatusCode.OK, new StringContent(JsonConvert.SerializeObject(new { id = "123", tracks = new { total = ++calls == 1 ? 2 : 3, items = new[] { new { id = calls } } } })))));
+            await Reject<InvalidDataException>(() => Sync(() => new GetInfo(new ReliableQobuzService(default, client)).getAlbumInfoLabels("app", "123", "auth")));
+            Check(calls == 2);
+        });
+        Add("artist release pagination advances by the number actually returned",()=>Sync(()=>
+        {
+            int calls = 0;
+            using var client = Client((request, token) =>
+            {
+                int offset = int.Parse(System.Text.RegularExpressions.Regex.Match(request.RequestUri.Query, @"[?&]offset=(\d+)").Groups[1].Value);
+                Check(offset == calls && calls < 3); calls++;
+                return Ready(Response(HttpStatusCode.OK, new StringContent(JsonConvert.SerializeObject(new { has_more = calls < 3, items = new[] { new { id = calls.ToString() } } }))));
+            });
+            var ids = new GetInfo(new ReliableQobuzService(default, client)).GetArtistReleaseTypeIds("app", "123", "album", "auth");
+            Check(calls == 3 && ids.SetEquals(new[] { "1", "2", "3" }));
+        }));
+        Add("empty artist release page with more pending cannot silently drop releases",async()=>
+        {
+            using var client = Client((request, token) => Ready(Response(HttpStatusCode.OK, new StringContent("{\"has_more\":true,\"items\":[]}"))));
+            await Reject<InvalidDataException>(() => Sync(() => new GetInfo(new ReliableQobuzService(default, client)).GetArtistReleaseTypeIds("app", "123", "album", "auth")));
+        });
+        Add("repeated artist release pages cannot run forever",async()=>
+        {
+            int calls = 0;
+            using var client = Client((request, token) => { calls++; return Ready(Response(HttpStatusCode.OK, new StringContent("{\"has_more\":true,\"items\":[{\"id\":\"one\"}]}"))); });
+            await Reject<InvalidDataException>(() => Sync(() => new GetInfo(new ReliableQobuzService(default, client)).GetArtistReleaseTypeIds("app", "123", "album", "auth")));
+            Check(calls == 2);
+        });
         if (!OperatingSystem.IsWindows())
         {
             Add("nonzero FLAC verifier exit fails the download",async()=>

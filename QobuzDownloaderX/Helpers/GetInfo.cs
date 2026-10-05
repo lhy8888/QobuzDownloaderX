@@ -47,15 +47,21 @@ namespace QobuzDownloaderX.Helpers
                 {
                     list = QoService.GetReleaseListWithAuth(app_id, artist_id, selectedTypes, user_auth_token, track_size: 1, limit: limit, offset: offset);
 
-                    if (list == null || list.Items == null || list.Items.Count == 0)
+                    if (list == null || list.Items == null) throw new InvalidDataException("Release list data is missing.");
+                    if (list.Items.Count == 0)
+                    {
+                        if (list.HasMore) throw new InvalidDataException("Release list ended before its final page.");
                         break;
-
+                    }
+                    int previous = allIds.Count;
                     foreach (var r in list.Items)
+                    {
+                        if (string.IsNullOrEmpty(r?.Id)) throw new InvalidDataException("Release identity is missing.");
                         allIds.Add(r.Id);
-
-                    offset += limit;
-
-                    if (offset > 100000) break;
+                    }
+                    if (allIds.Count == previous) throw new InvalidDataException("Release pagination did not advance.");
+                    offset += list.Items.Count;
+                    if (offset > 100000 && list.HasMore) throw new InvalidDataException("Release pagination limit exceeded.");
 
                 } while (list.HasMore);
 
@@ -93,7 +99,7 @@ namespace QobuzDownloaderX.Helpers
                 var allItems = QoArtist.Albums.Items.Cast<object>().ToList();
                 int total = QoArtist.Albums.Total;
 
-                offset += limit;
+                offset = allItems.Count;
 
                 // 2) Pagination loop - keep requesting pages until all albums are collected
                 while (allItems.Count < total)
@@ -103,8 +109,9 @@ namespace QobuzDownloaderX.Helpers
                     if (page == null || page.Albums == null || page.Albums.Items == null || page.Albums.Items.Count == 0)
                         break;
 
+                    if (page.Albums.Total != total) throw new InvalidDataException("The collection changed during pagination; retry the request.");
                     allItems.AddRange(page.Albums.Items.Cast<object>());
-                    offset += limit;
+                    offset = allItems.Count;
 
                     // Safety break to prevent infinite loop
                     if (offset > 100000) break;
@@ -161,7 +168,7 @@ namespace QobuzDownloaderX.Helpers
                 int total = 0;
                 try { total = QoLabel.Albums.Total; } catch { }
 
-                offset += limit;
+                offset = allItems.Count;
 
                 // 2) Pagination loop - keep requesting pages until all items are collected
                 while ((total == 0 && QoLabel.Albums.Items.Count > 0)
@@ -173,9 +180,10 @@ namespace QobuzDownloaderX.Helpers
                         break;
 
                     // Add items from the page
+                    if (page.Albums.Total != total) throw new InvalidDataException("The collection changed during pagination; retry the request.");
                     allItems.AddRange(page.Albums.Items.Cast<object>());
 
-                    offset += limit;
+                    offset = allItems.Count;
 
                     if (offset > 100000) break; // safety cutoff
                 }
@@ -231,7 +239,7 @@ namespace QobuzDownloaderX.Helpers
                 }
                 catch { }
 
-                offset += limit;
+                offset = allItems.Count;
 
                 // 2) Pagination loop - keep requesting pages until all items are collected
                 while (total == 0 || allItems.Count < total)
@@ -254,9 +262,11 @@ namespace QobuzDownloaderX.Helpers
                     if (pageItems.Count == 0)
                         break;
 
+                    int pageTotal = type == "albums" ? page.Albums.Total : type == "tracks" ? page.Tracks.Total : page.Artists.Total;
+                    if (pageTotal != total) throw new InvalidDataException("The collection changed during pagination; retry the request.");
                     allItems.AddRange(pageItems);
 
-                    offset += limit;
+                    offset = allItems.Count;
                     if (offset > 1000000) break;
                 }
 
@@ -312,7 +322,7 @@ namespace QobuzDownloaderX.Helpers
                 var allItems = QoAlbum.Tracks.Items.Cast<object>().ToList();
                 int total = QoAlbum.Tracks.Total;
 
-                offset += limit;
+                offset = allItems.Count;
 
                 // 2) Pagination loop - keep requesting pages until all tracks are collected
                 while (allItems.Count < total)
@@ -322,8 +332,9 @@ namespace QobuzDownloaderX.Helpers
                     if (page == null || page.Tracks == null || page.Tracks.Items == null || page.Tracks.Items.Count == 0)
                         break;
 
+                    if (page.Tracks.Total != total) throw new InvalidDataException("The collection changed during pagination; retry the request.");
                     allItems.AddRange(page.Tracks.Items.Cast<object>());
-                    offset += limit;
+                    offset = allItems.Count;
 
                     // Safety break to prevent infinite loop
                     if (offset > 100000) break;
@@ -362,7 +373,7 @@ namespace QobuzDownloaderX.Helpers
 
                 int total = QoPlaylist.Tracks.Total;
 
-                offset += limit;
+                offset = allItems.Count;
 
                 // 2) Pagination loop - keep requesting pages until all items are collected
                 while (total == 0 || allItems.Count < total)
@@ -375,9 +386,10 @@ namespace QobuzDownloaderX.Helpers
                     if (page.Tracks.Items.Count == 0)
                         break;
 
+                    if (page.Tracks.Total != total) throw new InvalidDataException("The collection changed during pagination; retry the request.");
                     allItems.AddRange(page.Tracks.Items.Cast<object>());
 
-                    offset += limit;
+                    offset = allItems.Count;
                     if (offset > 1000000) break;
                 }
 

@@ -10,6 +10,10 @@ using System.Resources;
 using System.Security.Cryptography;
 using System.Text;
 using System.Threading;
+using System.ComponentModel;
+using System.Reflection;
+using System.Windows.Forms;
+using Newtonsoft.Json;
 using QobuzDownloaderX;
 using QobuzDownloaderX.Helpers;
 using QobuzDownloaderX.Properties;
@@ -22,6 +26,13 @@ internal static class Program
     private static readonly List<Tuple<string, Action>> tests = new List<Tuple<string, Action>>();
     private static readonly string temporary = Path.Combine(Path.GetTempPath(), "qbdlx-windows-" + Guid.NewGuid().ToString("N"));
     private static qbdlxForm form;
+    private static LoginForm loginWindow;
+    private static T Field<T>(object target, string name) => (T)target.GetType().GetField(name, BindingFlags.Instance | BindingFlags.NonPublic).GetValue(target);
+    private static void Invoke(object target, string name, params object[] arguments)
+    {
+        try { target.GetType().GetMethod(name, BindingFlags.Instance | BindingFlags.NonPublic).Invoke(target, arguments); }
+        catch (TargetInvocationException ex) { System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(ex.InnerException).Throw(); }
+    }
     private static string Fixture(string ext) => Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Fixtures", "tone" + ext);
     private static void Check(bool value, string message = "Assertion failed") { if (!value) throw new Exception(message); }
     private static void Reject<T>(Action action) where T : Exception
@@ -39,6 +50,8 @@ internal static class Program
     {
         if (Environment.OSVersion.Platform != PlatformID.Win32NT) { Console.Error.WriteLine("WindowsChecks requires Windows."); return 1; }
         if (!File.Exists(Environment.GetEnvironmentVariable("QBDLX_TEST_FLAC"))) { Console.Error.WriteLine("The official FLAC decoder is required."); return 1; }
+        Application.SetUnhandledExceptionMode(UnhandledExceptionMode.ThrowException);
+        Control.CheckForIllegalCrossThreadCalls = true;
         string reportPath = Environment.GetEnvironmentVariable("QBDLX_TEST_REPORT");
         if (!string.IsNullOrEmpty(reportPath)) Environment.SetEnvironmentVariable("QBDLX_TEST_REPORT", Path.GetFullPath(reportPath));
         Directory.CreateDirectory(temporary);
@@ -71,11 +84,9 @@ internal static class Program
         });
         Add("login and main window controls construct without login/network", () =>
         {
-            // LoginForm constructs and owns a main form field. Reuse that
-            // instance so both forms exercise the application's real startup
-            // construction without opening the same timestamped log twice.
-            using (var login = new LoginForm())
-            { Check(login.Controls.Count > 0); form = qbdlxForm._qbdlxForm; Check(form != null && form.Controls.Count > 0); }
+            loginWindow = new LoginForm();
+            Check(loginWindow.Controls.Count > 0); form = qbdlxForm._qbdlxForm;
+            Check(form != null && form.Controls.Count > 0);
             form.languageManager = new LanguageManager();
             form.languageManager.LoadLanguage(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "languages", "en.json"));
         });
@@ -84,8 +95,63 @@ internal static class Program
             const string secret = "synthetic test credential";
             string encrypted = CredentialProtection.Encrypt(secret, data => ProtectedData.Protect(data, null, DataProtectionScope.CurrentUser));
             Check(encrypted.Length > 0 && encrypted != secret);
-            Check(Encoding.UTF8.GetString(ProtectedData.Unprotect(Convert.FromBase64String(encrypted), null, DataProtectionScope.CurrentUser)) == secret);
+            Check(CredentialProtection.Read(encrypted, data => ProtectedData.Protect(data, null, DataProtectionScope.CurrentUser), data => ProtectedData.Unprotect(data, null, DataProtectionScope.CurrentUser), out _) == secret);
             Check(CredentialProtection.Encrypt(secret, data => { throw new CryptographicException(); }) == "");
+        });
+        Add("the actual login window migrates plaintext and legacy Windows credentials", () =>
+        {
+            string email = Settings.Default.savedEmail, password = Settings.Default.savedPassword, app = Settings.Default.savedAppID, secret = Settings.Default.savedSecret;
+            bool alternate = Settings.Default.savedAltLoginValue;
+            try
+            {
+                Settings.Default.savedAltLoginValue = false;
+                Invoke(loginWindow, "InitializeTheme"); Invoke(loginWindow, "InitializeLanguage");
+                Settings.Default.savedEmail = "test@example.invalid";
+                Settings.Default.savedPassword = "cGFzc3dvcmQ=";
+                Settings.Default.savedAppID = "12345678";
+                Settings.Default.savedSecret = "0123456789abcdef0123456789abcdef";
+                Invoke(loginWindow, "SetSavedValues");
+                Check(loginWindow.password == "cGFzc3dvcmQ=" && loginWindow.app_secret == "0123456789abcdef0123456789abcdef");
+                Check(Field<TextBox>(loginWindow, "passwordTextBox").PasswordChar == '*');
+                Check(new[] { Settings.Default.savedEmail, Settings.Default.savedPassword, Settings.Default.savedAppID, Settings.Default.savedSecret }.All(value => value.StartsWith(CredentialProtection.Prefix)));
+                Invoke(loginWindow, "SetSavedValues"); Check(loginWindow.app_id == "12345678" && loginWindow.username == "test@example.invalid");
+                Settings.Default.savedPassword = Convert.ToBase64String(ProtectedData.Protect(Encoding.UTF8.GetBytes("old password"), null, DataProtectionScope.CurrentUser));
+                Invoke(loginWindow, "SetSavedValues"); Check(loginWindow.password == "old password" && Settings.Default.savedPassword.StartsWith(CredentialProtection.Prefix));
+                Settings.Default.savedPassword = CredentialProtection.Prefix + "invalid!";
+                Invoke(loginWindow, "SetSavedValues"); Check(loginWindow.password == "" && Settings.Default.savedPassword == "");
+                Check(Field<TextBox>(loginWindow, "passwordTextBox").PasswordChar == '\0');
+            }
+            finally
+            {
+                Settings.Default.savedEmail = email; Settings.Default.savedPassword = password; Settings.Default.savedAppID = app; Settings.Default.savedSecret = secret;
+                Settings.Default.savedAltLoginValue = alternate; Settings.Default.Save();
+            }
+        });
+        Add("simultaneous main window construction does not collide on log files", () =>
+        {
+            qbdlxForm other = null;
+            try
+            {
+                other = new qbdlxForm();
+                form.logger.Info("first instance"); other.logger.Info("second instance");
+                Check(form.logger != other.logger && other.Controls.Count > 0);
+            }
+            finally { other?.logger.Dispose(); other?.Dispose(); qbdlxForm._qbdlxForm = form; }
+        });
+        Add("stop between batch items cancels the remaining queue", () =>
+        {
+            var saved = form.abortTokenSource;
+            bool busy = qbdlxForm.getLinkTypeIsBusy, batch = qbdlxForm.isBatchDownloadRunning;
+            using (var cancellation = new CancellationTokenSource())
+            {
+                try
+                {
+                    qbdlxForm.getLinkTypeIsBusy = false; qbdlxForm.isBatchDownloadRunning = true; form.abortTokenSource = cancellation;
+                    Invoke(form, "abortButton_Click", form, EventArgs.Empty);
+                    Check(cancellation.IsCancellationRequested);
+                }
+                finally { form.abortTokenSource = saved; qbdlxForm.getLinkTypeIsBusy = busy; qbdlxForm.isBatchDownloadRunning = batch; }
+            }
         });
         Add("missing optional album artists and genre do not break FLAC tags", () =>
         {
@@ -132,6 +198,20 @@ internal static class Program
             AudioVerification.SaveReceipt(replacement, Track(), "27", quality);
             Check(AudioVerification.CanSkipAnyVerifiedCopy(destination, Track(), "27", quality));
         });
+        Add("long Chinese audio paths retain receipts and duplicate identities", () =>
+        {
+            string directory = Path.Combine(temporary, "长目录 " + new string('d', 90)); Directory.CreateDirectory(directory);
+            string path = AudioVerification.IdentityPath(Path.Combine(directory, new string('歌', 250) + "😀.flac"), Track(), "27", quality);
+            Check(path.Length > 260 && Path.GetFileName(path).Length + " (100000)".Length + AudioVerification.ReceiptExtension.Length <= 255);
+            File.Copy(Fixture(".flac"), path); TagFile.WriteToFile(path, null, Album(), Track()); Validate(path);
+            AudioVerification.SaveReceipt(path, Track(), "27", quality); AudioVerification.SaveReceipt(path, Track(), "27", quality);
+            Check(AudioVerification.CanSkip(path, Track(), "27", quality));
+            string replacement = Miscellaneous.GetDuplicateFileName(path);
+            ZlpIOHelper.MoveFile(path, replacement, overwriteExisting: false); File.WriteAllBytes(path, new byte[] { 1 });
+            AudioVerification.SaveReceipt(replacement, Track(), "27", quality);
+            Check(AudioVerification.CanSkipAnyVerifiedCopy(path, Track(), "27", quality));
+            Check(!Directory.EnumerateFiles(directory, "*.tmp").Any());
+        });
         Add("a locked Windows destination cannot be reported as a successful write", () =>
         {
             string path = CopyFixture("locked");
@@ -170,6 +250,47 @@ internal static class Program
             Check(summary.Contains("{0}") && summary.Contains("{1}") && summary.Contains("{2}"));
             Check(language.GetTranslation("processed") == "processed");
         });
+        Add("login completion opens the real main window on the original UI thread", () =>
+        {
+            Check(Environment.CurrentDirectory != AppDomain.CurrentDomain.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar));
+            int uiThread = Thread.CurrentThread.ManagedThreadId;
+            form.user_id = "1"; form.user_display_name = "Synthetic test user";
+            form.QoUser = JsonConvert.DeserializeObject<User>("{\"user_auth_token\":\"synthetic\",\"user\":{\"id\":1,\"display_name\":\"Synthetic test user\",\"email\":\"test@example.invalid\",\"country\":\"GB\"}}");
+            Check(form.QoUser?.UserInfo != null);
+            _ = loginWindow.Handle;
+            var worker = Field<BackgroundWorker>(loginWindow, "loginBackground");
+            var original = (DoWorkEventHandler)Delegate.CreateDelegate(typeof(DoWorkEventHandler), loginWindow, "loginBackground_DoWork");
+            bool completed = false; int completedThread = 0;
+            using (var release = new ManualResetEventSlim())
+            {
+                DoWorkEventHandler fakeLogin = (sender, args) => { release.Wait(); args.Result = true; };
+                RunWorkerCompletedEventHandler observed = (sender, args) => { completedThread = Thread.CurrentThread.ManagedThreadId; completed = true; };
+                worker.DoWork -= original; worker.DoWork += fakeLogin; worker.RunWorkerCompleted += observed;
+                try
+                {
+                    worker.RunWorkerAsync();
+                    // Enter/click during the pending request must return without
+                    // touching credentials or starting a second worker.
+                    Invoke(loginWindow, "loginButton_Click", loginWindow, EventArgs.Empty);
+                    Check(worker.IsBusy); release.Set();
+                    var timeout = Stopwatch.StartNew();
+                    while (!completed && timeout.Elapsed < TimeSpan.FromSeconds(15)) { Application.DoEvents(); Thread.Sleep(10); }
+                    Check(completed && completedThread == uiThread && form.Visible && !form.InvokeRequired);
+                    Check(form.languageComboBox.Items.Contains("EN"), "Language assets missing when started from another directory");
+                    Check(form.downloadOutput.Text.Contains("Synthetic test user"));
+                }
+                finally
+                {
+                    release.Set(); worker.DoWork -= fakeLogin; worker.DoWork += original; worker.RunWorkerCompleted -= observed;
+                    form.Hide();
+                }
+            }
+        });
+        Add("application shutdown does not re-enter closing from the main window", () =>
+        {
+            Invoke(form, "qbdlxForm_FormClosing", form, new FormClosingEventArgs(CloseReason.ApplicationExitCall, false));
+            Check(!loginWindow.IsDisposed && !form.IsDisposed, "Shutdown was recursively restarted");
+        });
         int failed = 0;
         try
         {
@@ -186,7 +307,7 @@ internal static class Program
         }
         finally
         {
-            form?.logger?.Dispose(); form?.Dispose();
+            loginWindow?.Dispose(); form?.logger?.Dispose(); form?.Dispose();
             Environment.CurrentDirectory = previous; Directory.Delete(temporary, true);
         }
     }
