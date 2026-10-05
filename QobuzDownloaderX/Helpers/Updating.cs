@@ -1,6 +1,7 @@
-﻿using Newtonsoft.Json.Linq;
+using Newtonsoft.Json.Linq;
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Net.Http;
 using System.Reflection;
 using System.Text.RegularExpressions;
@@ -27,10 +28,19 @@ namespace QobuzDownloaderX.Helpers
             { "zh-cn.json", "Languages/zh-cn.json" }
         };
 
+        private static void SaveLanguage(string path, string content)
+        {
+            JObject.Parse(content);
+            Directory.CreateDirectory(Path.GetDirectoryName(path));
+            string staged = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
+            try { AtomicFiles.WriteText(staged, content); if (File.Exists(path)) File.Replace(staged, path, null); else File.Move(staged, path); }
+            finally { AtomicFiles.TryDelete(staged); }
+        }
+
         public static string NormalizeDate(string dateStr)
         {
             // Remove any alphabetic timezone part
-            return removeTimezoneRegEx.Replace(dateStr, "").Trim();
+            return removeTimezoneRegEx.Replace(dateStr ?? "", "").Trim();
         }
 
         public static async Task CheckAndUpdateLanguageFiles()
@@ -44,70 +54,72 @@ namespace QobuzDownloaderX.Helpers
                     foreach (var languageFile in LanguageFiles)
                     {
                         string fileName = languageFile.Key;
-                        string localFilePath = languageFile.Value;
+                        string localFilePath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "languages", fileName);
 
-                        string apiUrl = $"https://api.github.com/repos/ImAiiR/QobuzDownloaderX/contents/QobuzDownloaderX/Resources/{localFilePath}";
+                        string apiUrl = $"https://api.github.com/repos/lhy8888/QobuzDownloaderX/contents/QobuzDownloaderX/Resources/{languageFile.Value}";
 
                         try
                         {
-                            HttpResponseMessage response = await client.GetAsync(apiUrl);
-                            if (response.IsSuccessStatusCode)
+                            using (HttpResponseMessage response = await client.GetAsync(apiUrl))
                             {
-                                string jsonResponse = await response.Content.ReadAsStringAsync();
-                                JObject fileMetadata = JObject.Parse(jsonResponse);
-
-                                // Retrieve the download URL for the remote file
-                                string downloadUrl = fileMetadata["download_url"]?.ToString();
-                                if (!string.IsNullOrEmpty(downloadUrl))
+                                if (response.IsSuccessStatusCode)
                                 {
-                                    // Fetch the remote file content
-                                    string remoteContent = await client.GetStringAsync(downloadUrl);
+                                    string jsonResponse = await response.Content.ReadAsStringAsync();
+                                    JObject fileMetadata = JObject.Parse(jsonResponse);
 
-                                    // Parse the "TranslationUpdatedOn" field from the remote file
-                                    JObject remoteJson = JObject.Parse(remoteContent);
-                                    string remoteUpdatedOnString = remoteJson["TranslationUpdatedOn"]?.ToString();
-
-                                    // Parse the local file's "TranslationUpdatedOn" field
-                                    if (ZlpIOHelper.FileExists(localFilePath.ToLower()))
+                                    // Retrieve the download URL for the remote file
+                                    string downloadUrl = fileMetadata["download_url"]?.ToString();
+                                    if (!string.IsNullOrEmpty(downloadUrl))
                                     {
-                                        string localContent = ZlpIOHelper.ReadAllText(localFilePath.ToLower());
-                                        JObject localJson = JObject.Parse(localContent);
-                                        string localUpdatedOnString = localJson["TranslationUpdatedOn"]?.ToString();
+                                        // Fetch the remote file content
+                                        string remoteContent = await client.GetStringAsync(downloadUrl);
 
-                                        // Compare updated date
-                                        if (DateTime.TryParse(NormalizeDate(remoteUpdatedOnString), out DateTime remoteDate) &&
-                                            DateTime.TryParse(NormalizeDate(localUpdatedOnString), out DateTime localDate))
+                                        // Parse the "TranslationUpdatedOn" field from the remote file
+                                        JObject remoteJson = JObject.Parse(remoteContent);
+                                        string remoteUpdatedOnString = remoteJson["TranslationUpdatedOn"]?.ToString();
+
+                                        // Parse the local file's "TranslationUpdatedOn" field
+                                        if (ZlpIOHelper.FileExists(localFilePath))
                                         {
-                                            if (remoteDate > localDate)
+                                            string localContent = ZlpIOHelper.ReadAllText(localFilePath);
+                                            JObject localJson = JObject.Parse(localContent);
+                                            string localUpdatedOnString = localJson["TranslationUpdatedOn"]?.ToString();
+
+                                            // Compare updated date
+                                            if (DateTime.TryParse(NormalizeDate(remoteUpdatedOnString), out DateTime remoteDate) &&
+                                                DateTime.TryParse(NormalizeDate(localUpdatedOnString), out DateTime localDate))
                                             {
-                                                ZlpIOHelper.WriteAllText(localFilePath.ToLower(), remoteContent);
-                                                qbdlxForm._qbdlxForm.logger.Debug($"File {fileName} updated successfully.");
+                                                if (remoteDate > localDate)
+                                                {
+                                                    SaveLanguage(localFilePath, remoteContent);
+                                                    qbdlxForm._qbdlxForm.logger.Debug($"File {fileName} updated successfully.");
+                                                }
+                                                else
+                                                {
+                                                    qbdlxForm._qbdlxForm.logger.Debug($"File {fileName} is already up-to-date.");
+                                                }
                                             }
                                             else
                                             {
-                                                qbdlxForm._qbdlxForm.logger.Debug($"File {fileName} is already up-to-date.");
+                                                qbdlxForm._qbdlxForm.logger.Error($"Failed to parse dates for {fileName}. Remote: '{remoteUpdatedOnString}', Local: '{localUpdatedOnString}'");
                                             }
                                         }
                                         else
                                         {
-                                            qbdlxForm._qbdlxForm.logger.Error($"Failed to parse dates for {fileName}. Remote: '{remoteUpdatedOnString}', Local: '{localUpdatedOnString}'");
+                                            // Local file does not exist, download it
+                                            SaveLanguage(localFilePath, remoteContent);
+                                            qbdlxForm._qbdlxForm.logger.Debug($"File {fileName} downloaded successfully.");
                                         }
                                     }
                                     else
                                     {
-                                        // Local file does not exist, download it
-                                        ZlpIOHelper.WriteAllText(localFilePath.ToLower(), remoteContent);
-                                        qbdlxForm._qbdlxForm.logger.Debug($"File {fileName} downloaded successfully.");
+                                        qbdlxForm._qbdlxForm.logger.Error($"Failed to retrieve the download URL for {fileName}.");
                                     }
                                 }
                                 else
                                 {
-                                    qbdlxForm._qbdlxForm.logger.Error($"Failed to retrieve the download URL for {fileName}.");
+                                    qbdlxForm._qbdlxForm.logger.Error($"Failed to fetch metadata for {fileName}: {response.StatusCode}");
                                 }
-                            }
-                            else
-                            {
-                                qbdlxForm._qbdlxForm.logger.Error($"Failed to fetch metadata for {fileName}: {response.StatusCode}");
                             }
                         }
                         catch (Exception ex)
@@ -149,8 +161,10 @@ namespace QobuzDownloaderX.Helpers
 
                     // Request the latest release from GitHub
                     qbdlxForm._qbdlxForm.logger.Debug("Requesting latest GitHub release");
-                    var versionUrl = "https://api.github.com/repos/ImAiiR/QobuzDownloaderX/releases/latest";
-                    var response = await httpClient.GetAsync(versionUrl);
+                    var versionUrl = "https://api.github.com/repos/lhy8888/QobuzDownloaderX/releases/latest";
+                    using (var response = await httpClient.GetAsync(versionUrl))
+                    {
+                    response.EnsureSuccessStatusCode();
                     string responseString = await response.Content.ReadAsStringAsync();
 
                     // Parse the JSON response
@@ -177,6 +191,7 @@ namespace QobuzDownloaderX.Helpers
                     else
                     {
                         qbdlxForm._qbdlxForm.logger.Debug("Current version matches the latest release.");
+                    }
                     }
                 }
             }

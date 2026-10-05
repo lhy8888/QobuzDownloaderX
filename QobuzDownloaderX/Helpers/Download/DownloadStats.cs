@@ -1,10 +1,15 @@
-﻿using System.Collections.Generic;
+using QobuzDownloaderX.Helpers;
+using System.Collections.Generic;
 using System.Diagnostics;
 
 namespace QobuzDownloaderX
 {
-    internal class DownloadStats
+    internal class DownloadStats : System.IDisposable
     {
+        internal ArtworkCache Artwork { get; } = new ArtworkCache();
+        public int SkippedByUser { get; private set; }
+        public void SkipByUser(int count) { SkippedByUser += count; }
+        public void Dispose() { Artwork.Dispose(); }
         public Stopwatch SpeedWatch { get; set; }
         public long CumulativeBytesRead { get; set; }
         public long LastUiBytes { get; set; }
@@ -20,7 +25,8 @@ namespace QobuzDownloaderX
         public string Summary()
         {
             var manager = qbdlxForm._qbdlxForm.languageManager;
-            return string.Format(manager.GetTranslation("downloadResultSummary"), Succeeded, Failed, Skipped);
+            string summary = string.Format(manager.GetTranslation("downloadResultSummary"), Succeeded, Failed, Skipped);
+            return SkippedByUser == 0 ? summary : summary + " | " + string.Format(manager.GetTranslation("downloadResultUserSkipped"), SkippedByUser);
         }
     }
 }

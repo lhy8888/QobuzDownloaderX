@@ -1,4 +1,5 @@
 {
+    "downloadResultUserSkipped": "手动跳过：{0}",
     "processed": "已处理",
     "downloadResultSummary": "下载结果：成功 {0}，失败 {1}，跳过 {2}",
     "TranslationCredit":            "Mxqing",

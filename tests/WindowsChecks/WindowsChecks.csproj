@@ -14,7 +14,10 @@
     <Reference Include="System.Windows.Forms" />
     <Reference Include="System.Drawing" />
     <Reference Include="System.Security" />
+    <Reference Include="System.Configuration" />
+    <Reference Include="System.Net.Http" />
     <PackageReference Include="Newtonsoft.Json" Version="[13.0.4]" />
+    <PackageReference Include="NLayer" Version="[3.0.0]" />
     <PackageReference Include="taglib" Version="[2.1.0]" />
     <PackageReference Include="ZetaLongPaths" Version="[1.0.17]" />
     <None Include="../CoreChecks/Fixtures/*" Link="Fixtures/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />

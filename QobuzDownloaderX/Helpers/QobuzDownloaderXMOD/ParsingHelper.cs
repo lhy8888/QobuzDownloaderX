@@ -23,7 +23,7 @@ namespace QobuzDownloaderX.Helpers.QobuzDownloaderXMOD
         /// <returns></returns>
         public static string[] GetArtistNames(List<QopenAPI.ArtistsList> artists, InvolvedPersonRoleType role)
         {
-            return artists.Where(artist => artist.Roles.Exists(roleString => InvolvedPersonRoleMapping.GetRoleByString(roleString) == role))
+            return (artists ?? new List<QopenAPI.ArtistsList>()).Where(artist => artist != null && !string.IsNullOrWhiteSpace(artist.Name) && artist.Roles != null && artist.Roles.Exists(roleString => InvolvedPersonRoleMapping.GetRoleByString(roleString) == role))
                           .Select(artist => artist.Name)
                           .ToArray();
         }
@@ -95,7 +95,7 @@ namespace QobuzDownloaderX.Helpers.QobuzDownloaderXMOD
             string[] mainPerformers = performersParser.GetPerformersWithRole(InvolvedPersonRoleType.MainArtist);
             string[] featuredPerformers = performersParser.GetPerformersWithRole(InvolvedPersonRoleType.FeaturedArtist);
 
-            string title = QoItem.Title;
+            string title = QoItem?.Title ?? "";
             
             string[] featPatterns = { 
                 "featuring ", " ft.",
@@ -146,18 +146,18 @@ namespace QobuzDownloaderX.Helpers.QobuzDownloaderXMOD
             else
             {
                 // Fallback: single performer name from QoItem.Performer
-                performerName = ParsingHelper.DecodeEncodedNonAsciiCharacters(QoItem.Performer?.Name);
+                performerName = ParsingHelper.DecodeEncodedNonAsciiCharacters(QoItem?.Performer?.Name);
             }
 
             // Final fallback: album artist name
             if (string.IsNullOrEmpty(performerName))
             {
-                performerName = ParsingHelper.DecodeEncodedNonAsciiCharacters(QoItem.Album?.Artist?.Name);
+                performerName = ParsingHelper.DecodeEncodedNonAsciiCharacters(QoItem?.Album?.Artist?.Name);
             }
 
             // Case: the main artist name (QoItem.Performer.Name) or the name extracted from the artist role
             // is a composed name that includes a "Feat" word without a dot, for example: "David Feat Dj Mago, MainArtist".
-            performerName = performerName.Replace(" Feat ", " Feat. ").
+            performerName = (performerName ?? "").Replace(" Feat ", " Feat. ").
                                           Replace(" feat ", " Feat. ").
                                           Replace(" Featuring ", " Feat. ").
                                           Replace(" featuring ", " Feat. ");
@@ -170,8 +170,8 @@ namespace QobuzDownloaderX.Helpers.QobuzDownloaderXMOD
         {
             string AlbumArtist;
             string[] AlbumArtists;
-            AlbumArtists = ParsingHelper.GetArtistNames(QoAlbum.Artists, InvolvedPersonRoleType.MainArtist);
-            string[] featuredArtists = ParsingHelper.GetArtistNames(QoAlbum.Artists, InvolvedPersonRoleType.FeaturedArtist);
+            AlbumArtists = ParsingHelper.GetArtistNames(QoAlbum?.Artists, InvolvedPersonRoleType.MainArtist);
+            string[] featuredArtists = ParsingHelper.GetArtistNames(QoAlbum?.Artists, InvolvedPersonRoleType.FeaturedArtist);
             string albumArtists = ParsingHelper.MergeFeaturedArtistsWithMainArtists(AlbumArtists, featuredArtists);
             // Add Features Artists to Album Artists.
             AlbumArtists = AlbumArtists.Concat(featuredArtists).ToArray();
@@ -182,12 +182,12 @@ namespace QobuzDownloaderX.Helpers.QobuzDownloaderXMOD
             }
             else
             {
-                AlbumArtist = ParsingHelper.DecodeEncodedNonAsciiCharacters(QoAlbum.Artist.Name);
+                AlbumArtist = ParsingHelper.DecodeEncodedNonAsciiCharacters(QoAlbum?.Artist?.Name);
             }
             // Qobuz doesn't return an array of Albumartists for compilations, so use singular AlbumArtist
             if (AlbumArtists.Length < 1)
             {
-                AlbumArtists = new string[] { AlbumArtist };
+                AlbumArtists = string.IsNullOrWhiteSpace(AlbumArtist) ? Array.Empty<string>() : new string[] { AlbumArtist };
             }
 
             return AlbumArtists;

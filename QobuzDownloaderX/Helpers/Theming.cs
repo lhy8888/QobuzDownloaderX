@@ -1,4 +1,4 @@
-﻿using Newtonsoft.Json;
+using Newtonsoft.Json;
 using QobuzDownloaderX.Properties;
 using QobuzDownloaderX.UserControls;
 using System;
@@ -375,6 +375,7 @@ namespace QobuzDownloaderX.Helpers
         // Default English translation if no files are avaialble
         public const string defaultLanguage = @"{
     ""processed"": ""processed"",
+    ""downloadResultUserSkipped"": ""Skipped by you: {0}"",
     ""downloadResultSummary"": ""Download results: succeeded {0}, failed {1}, skipped {2}"",
     ""TranslationCredit"":            ""AiiR"",
     ""TranslationUpdatedOn"":         ""January 19, 2026, 03:16PM EST"",

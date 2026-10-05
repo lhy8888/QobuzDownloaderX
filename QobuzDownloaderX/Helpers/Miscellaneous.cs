@@ -1,4 +1,4 @@
-﻿using QobuzDownloaderX.Helpers.QobuzDownloaderXMOD;
+using QobuzDownloaderX.Helpers.QobuzDownloaderXMOD;
 using QobuzDownloaderX.Properties;
 using QobuzDownloaderX.UI.DevCase.UI.Components;
 using QobuzDownloaderX.Win32;
@@ -51,7 +51,7 @@ namespace QobuzDownloaderX.Helpers
             if (!Settings.Default.clearOldLogs) return;
 
             string basePath = AppDomain.CurrentDomain.BaseDirectory;
-            string folderPath = Path.Combine(basePath, "logs");
+            string folderPath = AppPaths.LogDirectory;
 
             if (!Directory.Exists(folderPath))
                 return;
@@ -978,13 +978,11 @@ namespace QobuzDownloaderX.Helpers
 
             var result = new List<string>();
 
-            for (int i = 0; i < qbdlxForm._qbdlxForm.downloadFromArtistListBox.Items.Count; i++)
+            qbdlxForm._qbdlxForm.InvokeOutput(() =>
             {
-                if (qbdlxForm._qbdlxForm.downloadFromArtistListBox.GetItemChecked(i))
-                {
-                    result.Add(fixedNames[i]);
-                }
-            }
+                for (int i = 0; i < Math.Min(fixedNames.Length, qbdlxForm._qbdlxForm.downloadFromArtistListBox.Items.Count); i++)
+                    if (qbdlxForm._qbdlxForm.downloadFromArtistListBox.GetItemChecked(i)) result.Add(fixedNames[i]);
+            });
 
             return string.Join(",", result);
         }
@@ -1103,7 +1101,7 @@ namespace QobuzDownloaderX.Helpers
         {
             return IsolatedRequest.RunAsync(cancellation =>
             {
-                var info = new GetInfo(cancellation, silent: true);
+                var info = new GetInfo(cancellation, silent: true, client: qbdlxForm._qbdlxForm.downloadClient);
                 fetch(info);
                 return info;
             }, TimeSpan.FromSeconds(30), token);
@@ -1125,6 +1123,7 @@ namespace QobuzDownloaderX.Helpers
             if (f.albumPictureBox.Image == null) f.albumPictureBox.Image = Resources.QBDLX_PictureBox;
 
 
+            bool ownsStats = stats == null;
             if (stats == null)
             {
                 stats = new DownloadStats
@@ -1181,6 +1180,7 @@ namespace QobuzDownloaderX.Helpers
                 f.batchDownloadButton.Enabled = !qbdlxForm.isBatchDownloadRunning;
                 qbdlxForm.skipCurrentAlbum = false;
                 qbdlxForm.getLinkTypeIsBusy = false;
+                if (ownsStats) stats.Dispose();
             }
         }
 
@@ -1220,6 +1220,7 @@ namespace QobuzDownloaderX.Helpers
                 f.batchDownloadButton.Enabled = true;
                 f.batchDownloadSelectedRowsButton.Enabled = SearchPanelHelper.selectedRowindices.Any();
                 f.notifyIcon1.Text = "QobuzDLX";
+                stats.Dispose();
             }
         }
 
@@ -1253,49 +1254,10 @@ namespace QobuzDownloaderX.Helpers
                 throw new InvalidDataException("No download folder is selected.");
             }
 
-            string albumLink = f.inputTextBox.Text.Trim().TrimEnd('/');
-            if (albumLink.EndsWith("/releases", StringComparison.OrdinalIgnoreCase))
-            {
-                albumLink = albumLink.Substring(0, albumLink.Length - "/releases".Length);
-            }
-
-            bool isValidUrl = qbdlxForm.qobuzUrlRegEx.IsMatch(albumLink)
-                              && Uri.TryCreate(albumLink, UriKind.Absolute, out Uri uriResult)
-                              && (uriResult.Scheme == Uri.UriSchemeHttp || uriResult.Scheme == Uri.UriSchemeHttps);
-
-            if (!isValidUrl)
-            {
-                string msg = string.Format(f.languageManager.GetTranslation("invalidUrl"), albumLink);
-                f.logger.Error(msg);
-                f.downloadOutput.Invoke(new Action(() => f.downloadOutput.Text = msg));
-                f.progressLabel.Invoke(new Action(() => f.progressLabel.Text = msg));
-                if (!qbdlxForm.isBatchDownloadRunning) TaskbarHelper.SetProgressState(TaskbarProgressState.Error);
-                if (qbdlxForm.isBatchDownloadRunning) MessageBox.Show(f, msg, Application.ProductName, MessageBoxButtons.OK, MessageBoxIcon.Error);
-                throw new InvalidDataException("Invalid Qobuz URL.");
-            }
-
-            var qobuzStoreLinkGrab = qbdlxForm.qobuzStoreLinkRegex.Match(albumLink).Groups;
-            var linkRegion = qobuzStoreLinkGrab[1].Value;
-            var storeLinkType = qobuzStoreLinkGrab[2].Value;
-            var linkName = qobuzStoreLinkGrab[3].Value;
-            var qobuzStoreLinkId = qobuzStoreLinkGrab[4].Value;
-
-            if (linkRegion != null)
-            {
-                if (storeLinkType == "album")
-                {
-                    albumLink = "https://play.qobuz.com/album/" + qobuzStoreLinkId;
-                }
-                else if (storeLinkType == "interpreter")
-                {
-                    albumLink = "https://play.qobuz.com/artist/" + qobuzStoreLinkId;
-                }
-            }
-
-            var qobuzLinkIdGrab = qbdlxForm.qobuzLinkIdGrabRegex.Match(albumLink).Groups;
-
-            var linkType = qobuzLinkIdGrab[1].Value;
-            var qobuzLinkId = qobuzLinkIdGrab[2].Value;
+            string albumLink = f.inputTextBox.Text.Trim();
+            var parsedLink = QobuzLink.Parse(albumLink);
+            string linkType = parsedLink.Type;
+            string qobuzLinkId = parsedLink.Id;
             f.qobuz_id = qobuzLinkId;
 
             f.downloadTrack.clearOutputText();
@@ -1427,7 +1389,7 @@ namespace QobuzDownloaderX.Helpers
                         catch (Exception) when (abortToken.IsCancellationRequested) { throw new OperationCanceledException(abortToken); }
                         catch (Exception ex)
                         {
-                            stats.Failure(f.qobuz_id, "Item failed (" + ex.GetType().Name + ").");
+                            stats.Failure(item?.Id?.ToString() ?? "unknown item", "Item failed (" + ex.GetType().Name + ").");
                             continue;
                         }
                         if (!qbdlxForm.isBatchDownloadRunning) TaskbarHelper.SetProgressValue(trackIndexPlaylist, totalTracksPlaylist);
@@ -1510,7 +1472,7 @@ namespace QobuzDownloaderX.Helpers
                         catch (Exception) when (abortToken.IsCancellationRequested) { throw new OperationCanceledException(abortToken); }
                         catch (Exception ex)
                         {
-                            stats.Failure(f.qobuz_id, "Item failed (" + ex.GetType().Name + ").");
+                            stats.Failure(item?.Id?.ToString() ?? "unknown item", "Item failed (" + ex.GetType().Name + ").");
                             continue;
                         }
                     }
@@ -1581,7 +1543,7 @@ namespace QobuzDownloaderX.Helpers
                         catch (Exception) when (abortToken.IsCancellationRequested) { throw new OperationCanceledException(abortToken); }
                         catch (Exception ex)
                         {
-                            stats.Failure(f.qobuz_id, "Item failed (" + ex.GetType().Name + ").");
+                            stats.Failure(item?.Id?.ToString() ?? "unknown item", "Item failed (" + ex.GetType().Name + ").");
                             continue;
                         }
                         if (!qbdlxForm.isBatchDownloadRunning) TaskbarHelper.SetProgressValue(albumIndexLabel, totalAlbumsLabel);
@@ -1597,7 +1559,7 @@ namespace QobuzDownloaderX.Helpers
                     break;
 
                 case "user":
-                    if (qobuzLinkId.Contains("albums"))
+                    if (qobuzLinkId.EndsWith("/albums", StringComparison.Ordinal))
                     {
                         f.skipButton.Enabled = true;
                         if (!qbdlxForm.isBatchDownloadRunning) TaskbarHelper.SetProgressValue(0, f.progressBarDownload.Maximum);
@@ -1655,13 +1617,13 @@ namespace QobuzDownloaderX.Helpers
                             catch (Exception) when (abortToken.IsCancellationRequested) { throw new OperationCanceledException(abortToken); }
                             catch (Exception ex)
                             {
-                                stats.Failure(f.qobuz_id, "Item failed (" + ex.GetType().Name + ").");
+                                stats.Failure(item?.Id?.ToString() ?? "unknown item", "Item failed (" + ex.GetType().Name + ").");
                                 continue;
                             }
                             f.progressItemsCountLabel.Text = $"{f.languageManager.GetTranslation("user")} | {f.languageManager.GetTranslation("album")} {albumIndexUser:N0}/{totalAlbumsUser:N0} {f.languageManager.GetTranslation("processed")}";
                         }
                     }
-                    else if (qobuzLinkId.Contains("tracks"))
+                    else if (qobuzLinkId.EndsWith("/tracks", StringComparison.Ordinal))
                     {
                         f.skipButton.Enabled = false;
                         if (!qbdlxForm.isBatchDownloadRunning) TaskbarHelper.SetProgressValue(0, f.progressBarDownload.Maximum);
@@ -1710,14 +1672,14 @@ namespace QobuzDownloaderX.Helpers
                             catch (Exception) when (abortToken.IsCancellationRequested) { throw new OperationCanceledException(abortToken); }
                             catch (Exception ex)
                             {
-                                stats.Failure(f.qobuz_id, "Item failed (" + ex.GetType().Name + ").");
+                                stats.Failure(item?.Id?.ToString() ?? "unknown item", "Item failed (" + ex.GetType().Name + ").");
                                 continue;
                             }
                             if (!qbdlxForm.isBatchDownloadRunning) TaskbarHelper.SetProgressValue(trackIndexUser, totalTracksUser);
                             f.progressItemsCountLabel.Text = $"{f.languageManager.GetTranslation("user")} | {CultureInfo.CurrentCulture.TextInfo.ToTitleCase(f.languageManager.GetTranslation("track"))} {trackIndexUser:N0}/{totalTracksUser:N0} {f.languageManager.GetTranslation("processed")}";
                         }
                     }
-                    else if (qobuzLinkId.Contains("artists"))
+                    else if (qobuzLinkId.EndsWith("/artists", StringComparison.Ordinal))
                     {
                         f.skipButton.Enabled = true;
                         if (!qbdlxForm.isBatchDownloadRunning) TaskbarHelper.SetProgressValue(0, f.progressBarDownload.Maximum);
@@ -1761,7 +1723,7 @@ namespace QobuzDownloaderX.Helpers
                             catch (Exception) when (abortToken.IsCancellationRequested) { throw new OperationCanceledException(abortToken); }
                             catch (Exception ex)
                             {
-                                stats.Failure(f.qobuz_id, "Item failed (" + ex.GetType().Name + ").");
+                                stats.Failure(artist?.Id?.ToString() ?? "unknown item", "Item failed (" + ex.GetType().Name + ").");
                                 continue;
                             }
                         }
@@ -1823,7 +1785,7 @@ namespace QobuzDownloaderX.Helpers
                                     catch (Exception) when (abortToken.IsCancellationRequested) { throw new OperationCanceledException(abortToken); }
                                     catch (Exception ex)
                                     {
-                                        stats.Failure(f.qobuz_id, "Item failed (" + ex.GetType().Name + ").");
+                                        stats.Failure(artistItem?.Id?.ToString() ?? "unknown item", "Item failed (" + ex.GetType().Name + ").");
                                         continue;
                                     }
                                 }
@@ -1832,7 +1794,7 @@ namespace QobuzDownloaderX.Helpers
                             catch (Exception) when (abortToken.IsCancellationRequested) { throw new OperationCanceledException(abortToken); }
                             catch (Exception ex)
                             {
-                                stats.Failure(f.qobuz_id, "Item failed (" + ex.GetType().Name + ").");
+                                stats.Failure(artist?.Id?.ToString() ?? "unknown item", "Item failed (" + ex.GetType().Name + ").");
                                 continue;
                             }
                         }

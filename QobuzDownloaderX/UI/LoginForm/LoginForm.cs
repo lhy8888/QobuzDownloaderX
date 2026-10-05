@@ -1,4 +1,4 @@
-﻿using QobuzDownloaderX.Helpers;
+using QobuzDownloaderX.Helpers;
 using QobuzDownloaderX.Properties;
 using QobuzDownloaderX.Win32;
 using QopenAPI;
@@ -61,7 +61,7 @@ namespace QobuzDownloaderX
             loginBackground.RunWorkerCompleted += loginBackground_RunWorkerCompleted;
         }
 
-        readonly string errorLog = Path.GetDirectoryName(Application.ExecutablePath) + "\\Latest_Error.log";
+        readonly string errorLog = Path.Combine(AppPaths.LogDirectory, "Latest_Error-" + Guid.NewGuid().ToString("N") + ".log");
         readonly string dllCheck = Path.GetDirectoryName(Application.ExecutablePath) + "\\taglib-sharp.dll";
 
         private void UpdateUILanguage()
@@ -779,7 +779,7 @@ namespace QobuzDownloaderX
             {
                 // If "Yes" is clicked, open GitHub page and close QBDLX.
                 logger.Debug("Opening GitHub page for latest update");
-                Process.Start("https://github.com/ImAiiR/QobuzDownloaderX/releases/latest");
+                Process.Start("https://github.com/lhy8888/QobuzDownloaderX/actions");
                 logger.Debug("Exiting");
                 Application.Exit();
             }

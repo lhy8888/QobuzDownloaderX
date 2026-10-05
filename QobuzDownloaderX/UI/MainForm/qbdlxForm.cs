@@ -1,4 +1,4 @@
-﻿using QobuzDownloaderX.Helpers;
+using QobuzDownloaderX.Helpers;
 using QobuzDownloaderX.Helpers.QobuzDownloaderXMOD;
 using QobuzDownloaderX.Properties;
 using QobuzDownloaderX.UI;
@@ -13,6 +13,7 @@ using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Net.Http;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
@@ -81,7 +82,7 @@ namespace QobuzDownloaderX
         internal static bool isBatchDownloadRunning;
 
         // Global flag that indicates whether the current album download must be skipped in the current 'getLinkTypeAsync' execution.
-        internal static bool skipCurrentAlbum;
+        internal static volatile bool skipCurrentAlbum;
 
         // Global flag that keeps track of the last current taskbar progress value to restore it when minimizing and restoring the main form.
         internal static int lastTaskBarProgressCurrentValue;
@@ -146,8 +147,9 @@ namespace QobuzDownloaderX
 
         internal readonly GetInfo getInfo = new GetInfo();
         internal readonly RenameTemplates renameTemplates = new RenameTemplates();
-        internal readonly DownloadAlbum downloadAlbum = new DownloadAlbum();
-        internal readonly DownloadTrack downloadTrack = new DownloadTrack();
+        internal readonly HttpClient downloadClient;
+        internal readonly DownloadAlbum downloadAlbum;
+        internal readonly DownloadTrack downloadTrack;
         internal readonly SearchPanelHelper searchPanelHelper = new SearchPanelHelper();
 
         internal static readonly Regex qobuzStoreLinkRegex = new Regex(
@@ -175,16 +177,29 @@ namespace QobuzDownloaderX
             }
         }
 
-        internal qbdlxForm()
-        {
-            // Create new log file
-            Directory.CreateDirectory("logs");
+        internal qbdlxForm() : this(null) { }
 
-            logger = new BufferedLogger("logs\\QobuzDLX " + DateTime.Now.ToString("yyyy⧸MM⧸dd HH꞉mm꞉ss") + " " + Guid.NewGuid().ToString("N") + ".log");
+        internal qbdlxForm(HttpClient client)
+        {
+            downloadClient = client;
+            downloadAlbum = new DownloadAlbum(client);
+            downloadTrack = new DownloadTrack(client);
+            // Create new log file
+            Directory.CreateDirectory(AppPaths.LogDirectory);
+
+            logger = new BufferedLogger(Path.Combine(AppPaths.LogDirectory, "QobuzDLX " + DateTime.Now.ToString("yyyy⧸MM⧸dd HH꞉mm꞉ss") + " " + Guid.NewGuid().ToString("N") + ".log"));
             logger.Debug("Logger started, QBDLX form initialized!");
 
             InitializeComponent();
             _qbdlxForm = this;
+        }
+
+        internal void InvokeOutput(Action update)
+        {
+            if (IsDisposed || Disposing || !IsHandleCreated) return;
+            try { if (InvokeRequired) Invoke(update); else update(); }
+            catch (ObjectDisposedException) { }
+            catch (InvalidOperationException) when (IsDisposed || Disposing || !IsHandleCreated) { }
         }
 
         internal static qbdlxForm _qbdlxForm;
@@ -262,6 +277,7 @@ namespace QobuzDownloaderX
 
         private async void qbdlxForm_FormClosing(object sender, FormClosingEventArgs e)
         {
+            searchPanelHelper.CancelImages();
             logger.Debug($"Triggered form closing with reason: {e.CloseReason}");
             // Application.Exit has already begun closing all windows. Calling
             // it again from this event can re-enter the closing sequence.
@@ -293,17 +309,9 @@ namespace QobuzDownloaderX
                             logger.Debug($"Form closing delayed/cancelled because {nameof(getLinkTypeIsBusy)} is {getLinkTypeIsBusy}");
                             abortTokenSource?.Cancel();
 
-                            // Short delay before exiting the application to try allow any current file download to finish/move safely.
-                            int maxWaitMilliseconds = 3000;
-                            int waitedMilliseconds = 0;
-                            int stepMilliseconds = 100;
-
-                            while ((getLinkTypeIsBusy || isBatchDownloadRunning) && (waitedMilliseconds < maxWaitMilliseconds))
-                            {
-                                await Task.Delay(stepMilliseconds);
-                                waitedMilliseconds += stepMilliseconds;
-                            }
-                            await Task.Delay(100);
+                            // Keep the message loop alive until hashing/tagging and file rollback finish.
+                            while (getLinkTypeIsBusy || isBatchDownloadRunning)
+                                await Task.Delay(100);
                         }
                     }
                 }
@@ -1894,7 +1902,7 @@ namespace QobuzDownloaderX
             {
                 Process.Start(new ProcessStartInfo
                 {
-                    FileName = "https://github.com/ImAiiR/QobuzDownloaderX",
+                    FileName = "https://github.com/lhy8888/QobuzDownloaderX",
                     UseShellExecute = true
                 });
             }

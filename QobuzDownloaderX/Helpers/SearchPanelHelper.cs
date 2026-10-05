@@ -1,7 +1,12 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Drawing;
+using Image = System.Drawing.Image;
 using System.Linq;
+using System.IO;
+using System.Net.Http;
+using System.Threading;
+using System.Threading.Tasks;
 using System.Windows.Forms;
 
 using QopenAPI;
@@ -20,6 +25,51 @@ namespace QobuzDownloaderX.Helpers
 
     internal sealed class SearchPanelHelper
     {
+        private static readonly HttpClient imageClient = new HttpClient { Timeout = TimeSpan.FromSeconds(20) };
+        private static readonly SemaphoreSlim imageSlots = new SemaphoreSlim(4);
+        private CancellationTokenSource imageCancellation = new CancellationTokenSource();
+        internal void CancelImages() { imageCancellation.Cancel(); }
+        private CancellationToken StartImageBatch()
+        {
+            imageCancellation.Cancel(); imageCancellation.Dispose();
+            imageCancellation = new CancellationTokenSource();
+            return imageCancellation.Token;
+        }
+        internal static async Task LoadThumbnailAsync(PictureBox picture, string url, CancellationToken token, HttpClient client = null)
+        {
+            if (!Uri.TryCreate(url, UriKind.Absolute, out var uri) || uri.Scheme != Uri.UriSchemeHttps) return;
+            Bitmap bitmap = null;
+            bool entered = false;
+            try
+            {
+                await imageSlots.WaitAsync(token).ConfigureAwait(false); entered = true;
+                using (var deadline = CancellationTokenSource.CreateLinkedTokenSource(token))
+                {
+                    deadline.CancelAfter(TimeSpan.FromSeconds(20));
+                    using (var response = await (client ?? imageClient).GetAsync(uri, HttpCompletionOption.ResponseHeadersRead, deadline.Token).ConfigureAwait(false))
+                    {
+                        response.EnsureSuccessStatusCode();
+                        using (var body = await response.Content.ReadAsStreamAsync().ConfigureAwait(false))
+                        using (var buffer = new MemoryStream())
+                        {
+                            byte[] bytes = new byte[8192]; int count;
+                            while ((count = await body.ReadAsync(bytes, 0, bytes.Length, deadline.Token).ConfigureAwait(false)) > 0)
+                            { if (buffer.Length + count > 5 * 1024 * 1024) throw new InvalidDataException("Thumbnail is too large."); buffer.Write(bytes, 0, count); }
+                            buffer.Position = 0;
+                            using (var source = Image.FromStream(buffer)) bitmap = new Bitmap(source);
+                        }
+                    }
+                }
+                token.ThrowIfCancellationRequested();
+                picture.Invoke(new Action(() =>
+                {
+                    if (token.IsCancellationRequested || picture.IsDisposed) return;
+                    var old = picture.Image; picture.Image = bitmap; bitmap = null; old?.Dispose();
+                }));
+            }
+            catch (Exception) { /* Keep the placeholder when a thumbnail fails or its row is closed. */ }
+            finally { bitmap?.Dispose(); if (entered) imageSlots.Release(); }
+        }
         private static int? lastAnchorRowIndex = null;
         private static Tuple<int, int> lastShiftRange = null;
 
@@ -38,14 +88,14 @@ namespace QobuzDownloaderX.Helpers
 
         public void SearchInitiate(string searchType, string app_id, string searchQuery, string user_auth_token)
         {
-            limitResults = (int)qbdlxForm._qbdlxForm.limitSearchResultsNumericUpDown.Value;
+            qbdlxForm._qbdlxForm.InvokeOutput(() => limitResults = (int)qbdlxForm._qbdlxForm.limitSearchResultsNumericUpDown.Value);
             qbdlxForm._qbdlxForm.Invoke(new Action(() => qbdlxForm._qbdlxForm.searchResultsCountLabel.Text = "…"));
 
             if (searchType == "releases")
             {
                 QoAlbumSearch = null;
                 QoAlbumSearch = QoService.SearchAlbumsWithAuth(app_id, user_auth_token, searchQuery, limitResults, 0);
-                QoAlbumSearch.Albums = SortAlbums(QoAlbumSearch.Albums);
+                qbdlxForm._qbdlxForm.InvokeOutput(() => QoAlbumSearch.Albums = SortAlbums(QoAlbumSearch.Albums));
                 PopulateTableAlbums(qbdlxForm._qbdlxForm, QoAlbumSearch);
                 qbdlxForm._qbdlxForm.Invoke(new Action(() => qbdlxForm._qbdlxForm.searchResultsCountLabel.Text = $"{QoAlbumSearch.Albums.Items.Count:N0} {qbdlxForm._qbdlxForm.languageManager.GetTranslation("searchResultsCountLabel")}"));
             }
@@ -53,7 +103,7 @@ namespace QobuzDownloaderX.Helpers
             {
                 QoTrackSearch = null;
                 QoTrackSearch = QoService.SearchTracksWithAuth(app_id, user_auth_token, searchQuery, limitResults, 0);
-                QoTrackSearch.Tracks = SortTracks(QoTrackSearch.Tracks);
+                qbdlxForm._qbdlxForm.InvokeOutput(() => QoTrackSearch.Tracks = SortTracks(QoTrackSearch.Tracks));
                 PopulateTableTracks(qbdlxForm._qbdlxForm, QoTrackSearch);
                 qbdlxForm._qbdlxForm.Invoke(new Action(() => qbdlxForm._qbdlxForm.searchResultsCountLabel.Text = $"{QoTrackSearch.Tracks.Items.Count:N0} {qbdlxForm._qbdlxForm.languageManager.GetTranslation("searchResultsCountLabel")}"));
             }
@@ -71,11 +121,14 @@ namespace QobuzDownloaderX.Helpers
 
             mainForm.Invoke((MethodInvoker)delegate ()
             {
+                CancellationToken imagesToken = StartImageBatch();
                 qbdlxForm._qbdlxForm.searchSortingPanel.Enabled = false;
 
                 TableLayoutPanel searchResultsTablePanel = mainForm.searchResultsTablePanel;
                 searchResultsTablePanel.SuspendLayout();
                 NativeMethods.SendMessage(searchResultsTablePanel.Handle, Constants.WM_SETREDRAW, IntPtr.Zero, IntPtr.Zero);
+                try
+                {
 
                 // Restore related selection row controls
                 lastAnchorRowIndex = 0;
@@ -129,12 +182,13 @@ namespace QobuzDownloaderX.Helpers
                     {
                         SizeMode = PictureBoxSizeMode.StretchImage
                     };
-                    try { artwork.Load(album.Image.Large.ToString()); /* Using the thumbnail URL */ } catch { artwork.Image = Resources.qbdlx_new; /* Use QBDLX Icon as fallback */ }
+                    artwork.Image = (Image)Resources.qbdlx_new.Clone();
                     artwork.Width = 65;
                     artwork.Height = 65;
                     artwork.Anchor = AnchorStyles.None; // Center both horizontally and vertically
                     artwork.Cursor = Cursors.Hand;
                     innerRow.Controls.Add(artwork, 0, 0);
+                    _ = Task.Run(() => LoadThumbnailAsync(artwork, album.Image?.Large, imagesToken));
 
                     artwork.MouseClick += (s, e) =>
                     {
@@ -149,7 +203,7 @@ namespace QobuzDownloaderX.Helpers
                     // Add Label for artist name
                     System.Windows.Forms.Label artistName = new System.Windows.Forms.Label
                     {
-                        Text = album.Artist.Name.Replace(@"&", @"&&").Trim(),
+                        Text = (album.Artist?.Name ?? "").Replace(@"&", @"&&").Trim(),
                         AutoSize = true, // Disable auto-sizing to allow wrapping
                         /*artistName.MaximumSize = new Size(0, 0);*/ // Word-wrap if needed
                         TextAlign = ContentAlignment.MiddleCenter, // Center text horizontally and vertically
@@ -162,7 +216,7 @@ namespace QobuzDownloaderX.Helpers
                     // Add Label for album title
                     System.Windows.Forms.Label albumTitle = new System.Windows.Forms.Label
                     {
-                        Text = album.Title.Replace(@"&", @"&&").Trim()
+                        Text = (album.Title ?? "").Replace(@"&", @"&&").Trim()
                     };
                     if (album.Version != null) { albumTitle.Text = albumTitle.Text + " (" + album.Version + ")"; }
                     if (album.ParentalWarning == true) { albumTitle.Text = "[E] " + albumTitle.Text; } // Add "[E]" if Qobuz lists the release with a parental warning
@@ -255,8 +309,7 @@ namespace QobuzDownloaderX.Helpers
 
                     rowIndex++;
                 }
-                NativeMethods.SendMessage(searchResultsTablePanel.Handle, Constants.WM_SETREDRAW, (IntPtr)1, IntPtr.Zero);
-                searchResultsTablePanel.ResumeLayout();
+
                 qbdlxForm._qbdlxForm.searchResultsPanel.AutoScrollPosition = new Point(0, 0);
                 qbdlxForm._qbdlxForm.searchSortingPanel.Enabled = rowIndex > 0;
                 qbdlxForm._qbdlxForm.selectAllRowsButton.Enabled = rowIndex > 0;
@@ -266,8 +319,15 @@ namespace QobuzDownloaderX.Helpers
                     mainForm.BeginInvoke((Action)(() =>
                     {
                         mainForm.ActiveControl = firstGetButton;
-                        firstGetButton.Focus();
+                        firstGetButton?.Focus();
                     }));
+                }
+                }
+                finally
+                {
+                    NativeMethods.SendMessage(searchResultsTablePanel.Handle, Constants.WM_SETREDRAW, (IntPtr)1, IntPtr.Zero);
+                    searchResultsTablePanel.ResumeLayout();
+                    searchResultsTablePanel.Invalidate(true);
                 }
             });
 
@@ -286,11 +346,14 @@ namespace QobuzDownloaderX.Helpers
 
             mainForm.Invoke((MethodInvoker)delegate ()
             {
+                CancellationToken imagesToken = StartImageBatch();
                 qbdlxForm._qbdlxForm.searchSortingPanel.Enabled = false;
 
                 TableLayoutPanel searchResultsTablePanel = mainForm.searchResultsTablePanel;
                 searchResultsTablePanel.SuspendLayout();
                 NativeMethods.SendMessage(searchResultsTablePanel.Handle, Constants.WM_SETREDRAW, IntPtr.Zero, IntPtr.Zero);
+                try
+                {
 
                 // Restore related selection row controls
                 lastAnchorRowIndex = 0;
@@ -344,13 +407,13 @@ namespace QobuzDownloaderX.Helpers
                     {
                         SizeMode = PictureBoxSizeMode.StretchImage
                     };
-                    try { artwork.Load(track.Album.Image.Large.ToString()); /* Using the thumbnail URL */ }
-                    catch { artwork.Image = Resources.qbdlx_new; /* Use QBDLX Icon as fallback */ }
+                    artwork.Image = (Image)Resources.qbdlx_new.Clone();
                     artwork.Width = 65;
                     artwork.Height = 65;
                     artwork.Anchor = AnchorStyles.None; // Center both horizontally and vertically
                     artwork.Cursor = Cursors.Hand;
                     innerRow.Controls.Add(artwork, 0, 0);
+                    _ = Task.Run(() => LoadThumbnailAsync(artwork, track.Album?.Image?.Large, imagesToken));
 
                     artwork.MouseClick += (s, e) =>
                     {
@@ -365,7 +428,7 @@ namespace QobuzDownloaderX.Helpers
                     // Add Label for artist name
                     System.Windows.Forms.Label artistName = new System.Windows.Forms.Label
                     {
-                        Text = track.Performer.Name.Replace(@"&", @"&&").Trim(),
+                        Text = (track.Performer?.Name ?? "").Replace(@"&", @"&&").Trim(),
                         AutoSize = true, // Disable auto-sizing to allow wrapping
                         /*artistName.MaximumSize = new Size(0, 0);*/ // Word-wrap if needed
                         TextAlign = ContentAlignment.MiddleCenter, // Center text horizontally and vertically
@@ -378,7 +441,7 @@ namespace QobuzDownloaderX.Helpers
                     // Add Label for track title
                     System.Windows.Forms.Label trackTitle = new System.Windows.Forms.Label
                     {
-                        Text = track.Title.Replace(@"&", @"&&").Trim()
+                        Text = (track.Title ?? "").Replace(@"&", @"&&").Trim()
                     };
                     if (track.Version != null) { trackTitle.Text = trackTitle.Text + " (" + track.Version + ")"; }
                     if (track.ParentalWarning == true) { trackTitle.Text = "[E] " + trackTitle.Text; } // Add "[E]" if Qobuz lists the track with a parental warning
@@ -471,8 +534,7 @@ namespace QobuzDownloaderX.Helpers
                     rowIndex++;
                 }
 
-                NativeMethods.SendMessage(searchResultsTablePanel.Handle, Constants.WM_SETREDRAW, (IntPtr)1, IntPtr.Zero);
-                searchResultsTablePanel.ResumeLayout();
+
                 qbdlxForm._qbdlxForm.searchResultsPanel.AutoScrollPosition = new Point(0, 0);
                 qbdlxForm._qbdlxForm.searchSortingPanel.Enabled = rowIndex > 0;
                 qbdlxForm._qbdlxForm.selectAllRowsButton.Enabled = rowIndex > 0; 
@@ -482,8 +544,15 @@ namespace QobuzDownloaderX.Helpers
                     mainForm.BeginInvoke((Action)(() =>
                     {
                         mainForm.ActiveControl = firstGetButton;
-                        firstGetButton.Focus();
+                        firstGetButton?.Focus();
                     }));
+                }
+                }
+                finally
+                {
+                    NativeMethods.SendMessage(searchResultsTablePanel.Handle, Constants.WM_SETREDRAW, (IntPtr)1, IntPtr.Zero);
+                    searchResultsTablePanel.ResumeLayout();
+                    searchResultsTablePanel.Invalidate(true);
                 }
             });
 
@@ -498,7 +567,7 @@ namespace QobuzDownloaderX.Helpers
         {
             if (parentPanel == null) return;
 
-            foreach (Control control in parentPanel.Controls)
+            foreach (Control control in parentPanel.Controls.Cast<Control>().ToArray())
             {
                 DisposeControlRecursively(control);
             }
@@ -516,14 +585,14 @@ namespace QobuzDownloaderX.Helpers
 
             if (control is Panel panel)
             {
-                foreach (Control child in panel.Controls)
+                foreach (Control child in panel.Controls.Cast<Control>().ToArray())
                 {
                     DisposeControlRecursively(child);
                 }
             }
             else if (control is TableLayoutPanel tableLayout)
             {
-                foreach (Control child in tableLayout.Controls)
+                foreach (Control child in tableLayout.Controls.Cast<Control>().ToArray())
                 {
                     DisposeControlRecursively(child);
                 }
@@ -829,9 +898,9 @@ namespace QobuzDownloaderX.Helpers
                 : $"{album.TracksCount} {qbdlxForm._qbdlxForm.languageManager.GetTranslation("tracks")}";
 
             string qualityText = $"{album.MaximumBitDepth}bit / {album.MaximumSamplingRate}kHz";
-            string genreName = Miscellaneous.GetShortenedGenreName(album.Genre.Name);
+            string genreName = Miscellaneous.GetShortenedGenreName(album.Genre?.Name);
 
-            string labelText = $"{album.ReleaseDateOriginal?.Substring(0, 4)}, {tracksText}\r\n{qualityText}\r\n{genreName}";
+            string labelText = $"{(album.ReleaseDateOriginal?.Length >= 4 ? album.ReleaseDateOriginal.Substring(0, 4) : "")}, {tracksText}\r\n{qualityText}\r\n{genreName}";
             return labelText;
         }
 
@@ -845,9 +914,9 @@ namespace QobuzDownloaderX.Helpers
             // QUALITY INFO
             // GENRE
             string qualityText = $"{track.MaximumBitDepth}bit / {track.MaximumSamplingRate}kHz";
-            string genreName = Miscellaneous.GetShortenedGenreName(track.Album.Genre.Name);
+            string genreName = Miscellaneous.GetShortenedGenreName(track.Album?.Genre?.Name);
 
-            string labelText = $"{track.ReleaseDateOriginal?.Substring(0, 4)}\r\n{qualityText}\r\n{genreName}";
+            string labelText = $"{(track.ReleaseDateOriginal?.Length >= 4 ? track.ReleaseDateOriginal.Substring(0, 4) : "")}\r\n{qualityText}\r\n{genreName}";
             return labelText;
         }
 
@@ -865,18 +934,26 @@ namespace QobuzDownloaderX.Helpers
 
             IEnumerable<Item> query = albums.Items;
 
-            bool descending = !qbdlxForm._qbdlxForm.sortAscendantCheckBox.Checked;
+            bool descending = false, artistSort = false, titleSort = false, genreSort = false, dateSort = false;
+            qbdlxForm._qbdlxForm.InvokeOutput(() =>
+            {
+                descending = !qbdlxForm._qbdlxForm.sortAscendantCheckBox.Checked;
+                artistSort = qbdlxForm._qbdlxForm.sortArtistNameButton.Checked;
+                titleSort = qbdlxForm._qbdlxForm.sortAlbumTrackNameButton.Checked;
+                genreSort = qbdlxForm._qbdlxForm.sortGenreButton.Checked;
+                dateSort = qbdlxForm._qbdlxForm.sortReleaseDateButton.Checked;
+            });
 
-            if (qbdlxForm._qbdlxForm.sortArtistNameButton.Checked)
+            if (artistSort)
                 query = descending ? query.OrderByDescending(i => i.Artist?.Name) : query.OrderBy(i => i.Artist?.Name);
 
-            else if (qbdlxForm._qbdlxForm.sortAlbumTrackNameButton.Checked)
+            else if (titleSort)
                 query = descending ? query.OrderByDescending(i => i.Title) : query.OrderBy(i => i.Title);
 
-            else if (qbdlxForm._qbdlxForm.sortGenreButton.Checked)
-                query = descending ? query.OrderByDescending(i => Miscellaneous.GetShortenedGenreName(i.Genre.Name)) : query.OrderBy(i => Miscellaneous.GetShortenedGenreName(i.Genre.Name));
+            else if (genreSort)
+                query = descending ? query.OrderByDescending(i => Miscellaneous.GetShortenedGenreName(i.Genre?.Name)) : query.OrderBy(i => Miscellaneous.GetShortenedGenreName(i.Genre?.Name));
 
-            else if (qbdlxForm._qbdlxForm.sortReleaseDateButton.Checked)
+            else if (dateSort)
                 query = descending
                     ? query.OrderByDescending(i => parseDate(i))
                     : query.OrderBy(i => parseDate(i));
@@ -902,20 +979,28 @@ namespace QobuzDownloaderX.Helpers
 
             IEnumerable<Item> query = tracks.Items;
 
-            bool descending = !qbdlxForm._qbdlxForm.sortAscendantCheckBox.Checked;
+            bool descending = false, artistSort = false, titleSort = false, genreSort = false, dateSort = false;
+            qbdlxForm._qbdlxForm.InvokeOutput(() =>
+            {
+                descending = !qbdlxForm._qbdlxForm.sortAscendantCheckBox.Checked;
+                artistSort = qbdlxForm._qbdlxForm.sortArtistNameButton.Checked;
+                titleSort = qbdlxForm._qbdlxForm.sortAlbumTrackNameButton.Checked;
+                genreSort = qbdlxForm._qbdlxForm.sortGenreButton.Checked;
+                dateSort = qbdlxForm._qbdlxForm.sortReleaseDateButton.Checked;
+            });
 
-            if (qbdlxForm._qbdlxForm.sortArtistNameButton.Checked)
+            if (artistSort)
                 query = descending
                     ? query.OrderByDescending(i => i.Album?.Artist?.Name ?? i.Name)
                     : query.OrderBy(i => i.Album?.Artist?.Name ?? i.Name);
 
-            else if (qbdlxForm._qbdlxForm.sortAlbumTrackNameButton.Checked)
+            else if (titleSort)
                 query = descending ? query.OrderByDescending(i => i.Title) : query.OrderBy(i => i.Title);
 
-            else if (qbdlxForm._qbdlxForm.sortGenreButton.Checked)
-                query = descending ? query.OrderByDescending(i => Miscellaneous.GetShortenedGenreName(i.Genre.Name)) : query.OrderBy(i => Miscellaneous.GetShortenedGenreName(i.Genre.Name));
+            else if (genreSort)
+                query = descending ? query.OrderByDescending(i => Miscellaneous.GetShortenedGenreName(i.Genre?.Name)) : query.OrderBy(i => Miscellaneous.GetShortenedGenreName(i.Genre?.Name));
 
-            else if (qbdlxForm._qbdlxForm.sortReleaseDateButton.Checked)
+            else if (dateSort)
                 query = descending
                     ? query.OrderByDescending(i => parseDate(i))
                     : query.OrderBy(i => parseDate(i));

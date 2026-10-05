@@ -2,6 +2,15 @@
   <PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net8.0</TargetFramework><EnableDefaultCompileItems>false</EnableDefaultCompileItems></PropertyGroup>
   <ItemGroup>
     <Compile Include="Program.cs" />
+    <Compile Include="RegressionChecks.cs" />
+    <Compile Include="../../QobuzDownloaderX/Helpers/QobuzLink.cs" Link="QobuzLink.cs" />
+    <Compile Include="../../QobuzDownloaderX/Helpers/AppPaths.cs" Link="AppPaths.cs" />
+    <Compile Include="../../QobuzDownloaderX/Helpers/SettingsStore.cs" Link="SettingsStore.cs" />
+    <Compile Include="../../QobuzDownloaderX/Helpers/Download/AtomicFiles.cs" Link="AtomicFiles.cs" />
+    <Compile Include="../../QobuzDownloaderX/Helpers/Download/ArtworkCache.cs" Link="ArtworkCache.cs" />
+    <Compile Include="../../QobuzDownloaderX/Helpers/Download/VerifiedAudioCommit.cs" Link="VerifiedAudioCommit.cs" />
+    <Compile Include="../../QobuzDownloaderX/Helpers/Download/Mp3Verification.cs" Link="Mp3Verification.cs" />
+
     <Compile Include="../Shared/CheckReport.cs" Link="CheckReport.cs" />
     <Compile Include="../../QobuzDownloaderX/Helpers/PaddingNumbers.cs" Link="PaddingNumbers.cs" />
     <Compile Include="../../QobuzDownloaderX/Helpers/Download/ReliableHttp.cs" Link="ReliableHttp.cs" />
@@ -16,6 +25,7 @@
     <Compile Include="../../QobuzDownloaderX/Helpers/GetInfo.cs" Link="GetInfo.cs" />
     <Reference Include="QopenAPI"><HintPath>../../QobuzDownloaderX/External References/Qo(penAPI).dll</HintPath></Reference>
     <PackageReference Include="Newtonsoft.Json" Version="[13.0.4]" />
+    <PackageReference Include="NLayer" Version="[3.0.0]" />
     <PackageReference Include="taglib" Version="[2.1.0]" />
     <None Include="Fixtures/*" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>

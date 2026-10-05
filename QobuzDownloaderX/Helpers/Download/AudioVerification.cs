@@ -54,6 +54,7 @@ namespace QobuzDownloaderX.Helpers
 
     internal sealed class AudioReceipt
     {
+        public int Version { get; set; }
         public string TrackId { get; set; }
         public string Format { get; set; }
         public int BitDepth { get; set; }
@@ -77,52 +78,84 @@ namespace QobuzDownloaderX.Helpers
                     throw new InvalidDataException("The audio duration does not match the track.");
             }
         }
-        private static string Hash(string path)
+        internal static async Task<string> HashAsync(string path, CancellationToken token)
         {
-            using (var stream = File.OpenRead(path))
-            using (var sha = SHA256.Create()) return BitConverter.ToString(sha.ComputeHash(stream)).Replace("-", "");
+            using (var file = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 81920, true))
+                return await HashAsync(file, token).ConfigureAwait(false);
         }
-        internal static bool CanSkipAnyVerifiedCopy(string path, Item track, string format, AudioQuality quality)
+        internal static async Task<string> HashAsync(System.IO.Stream stream, CancellationToken token)
         {
-            if (CanSkip(path, track, format, quality)) return true;
+            using (var sha = SHA256.Create())
+            {
+                byte[] buffer = new byte[81920];
+                while (true)
+                {
+                    token.ThrowIfCancellationRequested();
+                    int count = await stream.ReadAsync(buffer, 0, buffer.Length, token).ConfigureAwait(false);
+                    if (count == 0) break;
+                    sha.TransformBlock(buffer, 0, count, null, 0);
+                }
+                token.ThrowIfCancellationRequested();
+                sha.TransformFinalBlock(Array.Empty<byte>(), 0, 0);
+                return BitConverter.ToString(sha.Hash).Replace("-", "");
+            }
+        }
+        internal static bool CanSkipAnyVerifiedCopy(string path, Item track, string format, AudioQuality quality) =>
+            CanSkipAnyVerifiedCopyAsync(path, track, format, quality, CancellationToken.None).GetAwaiter().GetResult();
+        internal static async Task<bool> CanSkipAnyVerifiedCopyAsync(string path, Item track, string format, AudioQuality quality, CancellationToken token)
+        {
+            if (await CanSkipAsync(path, track, format, quality, token).ConfigureAwait(false)) return true;
             string directory = Path.GetDirectoryName(path);
             if (!Directory.Exists(directory)) return false;
-            // A damaged/unverified original is preserved, and a verified replacement may have an auto-renamed name.
-            string name = Path.GetFileNameWithoutExtension(path);
-            string ext = Path.GetExtension(path);
-            foreach (string receipt in Directory.EnumerateFiles(directory, name + " (*)" + ext + ".qbdlx.json"))
+            string name = Path.GetFileNameWithoutExtension(path), ext = Path.GetExtension(path);
+            foreach (string receipt in Directory.EnumerateFiles(directory, name + " (*)" + ext + ReceiptExtension))
             {
-                string candidate = receipt.Substring(0, receipt.Length - ".qbdlx.json".Length);
-                if (CanSkip(candidate, track, format, quality)) return true;
+                token.ThrowIfCancellationRequested();
+                string candidate = receipt.Substring(0, receipt.Length - ReceiptExtension.Length);
+                if (await CanSkipAsync(candidate, track, format, quality, token).ConfigureAwait(false)) return true;
             }
             return false;
         }
-        internal static bool CanSkip(string path, Item track, string format, AudioQuality quality)
+        internal static bool CanSkip(string path, Item track, string format, AudioQuality quality) =>
+            CanSkipAsync(path, track, format, quality, CancellationToken.None).GetAwaiter().GetResult();
+        internal static async Task<bool> CanSkipAsync(string path, Item track, string format, AudioQuality quality, CancellationToken token)
         {
             try
             {
-                if (!File.Exists(path) || !File.Exists(path + ".qbdlx.json")) return false;
-                var receipt = JsonConvert.DeserializeObject<AudioReceipt>(File.ReadAllText(path + ".qbdlx.json"));
+                token.ThrowIfCancellationRequested();
+                if (!File.Exists(path) || !File.Exists(path + ReceiptExtension)) return false;
+                var receipt = JsonConvert.DeserializeObject<AudioReceipt>(File.ReadAllText(path + ReceiptExtension));
                 if (receipt == null || receipt.TrackId != track.Id.ToString() || receipt.Format != format ||
-                    receipt.BitDepth != quality.BitDepth || receipt.SampleRate != quality.SampleRate || receipt.Sha256 != Hash(path)) return false;
+                    receipt.BitDepth != quality.BitDepth || receipt.SampleRate != quality.SampleRate ||
+                    receipt.Sha256 != await HashAsync(path, token).ConfigureAwait(false)) return false;
                 Inspect(path, track, quality);
+                if (!quality.IsFlac && receipt.Version < 2) await Mp3Verification.ValidateAsync(path, token).ConfigureAwait(false);
+                token.ThrowIfCancellationRequested();
                 return true;
             }
-            catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException || ex is JsonException || ex is TagLib.CorruptFileException || ex is TagLib.UnsupportedFormatException)
+            catch (Exception ex) when (ex is IOException || ex is InvalidDataException || ex is UnauthorizedAccessException || ex is JsonException || ex is TagLib.CorruptFileException || ex is TagLib.UnsupportedFormatException)
             { return false; }
         }
-        internal static void SaveReceipt(string path, Item track, string format, AudioQuality quality)
+        internal static async Task<string> CreateReceiptAsync(string path, Item track, string format, AudioQuality quality, CancellationToken token)
         {
-            var receipt = new AudioReceipt { TrackId = track.Id.ToString(), Format = format,
-                BitDepth = quality.BitDepth, SampleRate = quality.SampleRate, Sha256 = Hash(path) };
+            var receipt = new AudioReceipt { Version = 2, TrackId = track.Id.ToString(), Format = format,
+                BitDepth = quality.BitDepth, SampleRate = quality.SampleRate, Sha256 = await HashAsync(path, token).ConfigureAwait(false) };
+            return JsonConvert.SerializeObject(receipt);
+        }
+        internal static void SaveReceipt(string path, Item track, string format, AudioQuality quality) =>
+            SaveReceiptAsync(path, track, format, quality, CancellationToken.None).GetAwaiter().GetResult();
+        internal static async Task SaveReceiptAsync(string path, Item track, string format, AudioQuality quality, CancellationToken token)
+        {
+            string json = await CreateReceiptAsync(path, track, format, quality, token).ConfigureAwait(false);
             string temporary = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(path)), ".qbdlx-receipt-" + Guid.NewGuid().ToString("N") + ".tmp");
             try
             {
-                File.WriteAllText(temporary, JsonConvert.SerializeObject(receipt));
-                if (File.Exists(path + ".qbdlx.json")) File.Replace(temporary, path + ".qbdlx.json", null);
-                else File.Move(temporary, path + ".qbdlx.json");
+                AtomicFiles.WriteText(temporary, json);
+                token.ThrowIfCancellationRequested();
+                if (File.Exists(path + ReceiptExtension)) File.Replace(temporary, path + ReceiptExtension, null);
+                else File.Move(temporary, path + ReceiptExtension);
             }
-            finally { if (File.Exists(temporary)) File.Delete(temporary); }
+            finally { AtomicFiles.TryDelete(temporary); }
         }
         internal static string IdentityPath(string path, Item track, string format, AudioQuality quality)
         {

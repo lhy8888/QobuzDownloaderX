@@ -1,4 +1,5 @@
 {
+    "downloadResultUserSkipped": "Manuell übersprungen: {0}",
     "processed": "bearbeitet",
     "downloadResultSummary": "Download results: succeeded {0}, failed {1}, skipped {2}",
     "TranslationCredit":            "TheParaTiger",

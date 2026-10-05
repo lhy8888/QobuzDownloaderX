@@ -1,9 +1,10 @@
-﻿using QopenAPI;
+using QopenAPI;
 using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.IO;
 using System.Threading;
+using System.Net.Http;
 
 namespace QobuzDownloaderX.Helpers
 {
@@ -11,8 +12,8 @@ namespace QobuzDownloaderX.Helpers
     {
         public ReliableQobuzService QoService;
         private readonly bool silent;
-        public GetInfo(CancellationToken token = default(CancellationToken), bool silent = false)
-        { QoService = new ReliableQobuzService(token); this.silent = silent; }
+        public GetInfo(CancellationToken token = default(CancellationToken), bool silent = false, HttpClient client = null)
+        { QoService = new ReliableQobuzService(token, client); this.silent = silent; }
         internal GetInfo(ReliableQobuzService service) { QoService = service; silent = true; }
         public User QoUser = new User();
         public Artist QoArtist;
@@ -422,23 +423,13 @@ namespace QobuzDownloaderX.Helpers
         public void updateDownloadOutput(string text)
         {
             if (silent) return;
-            if (outputText == "Test String" | outputText == null)
+            var form = qbdlxForm._qbdlxForm;
+            form.InvokeOutput(() =>
             {
-                Miscellaneous.update(qbdlxForm._qbdlxForm, null);
-                outputText = qbdlxForm._qbdlxForm.downloadOutput.Text;
-                Miscellaneous.update(qbdlxForm._qbdlxForm, text);
-                outputText = qbdlxForm._qbdlxForm.downloadOutput.Text;
-            }
-            else if (text == null)
-            {
-                Miscellaneous.update(qbdlxForm._qbdlxForm, null);
-                outputText = qbdlxForm._qbdlxForm.downloadOutput.Text;
-            }
-            else
-            {
-                Miscellaneous.update(qbdlxForm._qbdlxForm, outputText + text);
-                outputText = qbdlxForm._qbdlxForm.downloadOutput.Text;
-            }
+                if (text == null) form.downloadOutput.Clear();
+                else form.downloadOutput.AppendText(text);
+                outputText = form.downloadOutput.Text;
+            });
         }
 
     }

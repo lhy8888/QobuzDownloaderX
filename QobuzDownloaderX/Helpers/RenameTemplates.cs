@@ -1,4 +1,4 @@
-﻿using QobuzDownloaderX.Helpers.QobuzDownloaderXMOD;
+using QobuzDownloaderX.Helpers.QobuzDownloaderXMOD;
 using QobuzDownloaderX.Properties;
 using QopenAPI;
 using System;
@@ -43,7 +43,7 @@ namespace QobuzDownloaderX.Helpers
         {
             if (QoAlbum.Artists != null && (updateAlbumInfoLabels || (Settings.Default.mergeArtistNames && Settings.Default.mergeArtistNamesInDirectoryNamesToo)))
             {
-                var mainArtists = QoAlbum.Artists.Where(a => a.Roles != null && a.Roles.Contains("main-artist")).ToList();
+                var mainArtists = QoAlbum.Artists.Where(a => a != null && a.Roles != null && a.Roles.Contains("main-artist")).ToList();
                 if (mainArtists.Count > 1)
                 {
                     var allButLastArtist = string.Join(", ", mainArtists.Take(mainArtists.Count - 1).Select(a => a.Name));
@@ -146,12 +146,12 @@ namespace QobuzDownloaderX.Helpers
                     .Replace("%tracksamplerate%", (actualSamplingRate?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? ""));
 
                 string titleFormatted = QoItem.Version == null
-                                        ? QoItem.Title
-                                        : $"{QoItem.Title.TrimEnd()} ({QoItem.Version})";
+                                        ? QoItem.Title ?? ""
+                                        : $"{(QoItem.Title ?? "").TrimEnd()} ({QoItem.Version})";
                 titleFormatted = repeatedParenthesesRegex.Replace(titleFormatted, "($1)");
                 template = template.Replace("%tracktitle%", titleFormatted);
 
-                if (Settings.Default.mergeArtistNames && QoAlbum.Artists != null)
+                if (Settings.Default.mergeArtistNames && QoAlbum?.Artists != null)
                 {
                     string performerNames = ParsingHelper.GetTrackPerformersName(QoItem);
                     template = template.Replace("%artistname%", performerNames);

@@ -3,6 +3,7 @@ using QobuzDownloaderX.Properties;
 using QopenAPI;
 using System;
 using System.IO;
+using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -10,6 +11,8 @@ namespace QobuzDownloaderX
 {
     internal sealed class DownloadTrack
     {
+        private readonly HttpClient client;
+        internal DownloadTrack(HttpClient client = null) { this.client = client; }
         internal string LastDirectory { get; private set; }
         readonly GetInfo getInfo = new GetInfo();
         public void clearOutputText() => getInfo.outputText = null;
@@ -34,14 +37,14 @@ namespace QobuzDownloaderX
                 token.ThrowIfCancellationRequested();
                 if (album == null || item?.Id == null) throw new InvalidDataException("Track or album information is missing.");
                 if (!item.Streamable && Settings.Default.streamableCheck) throw new InvalidDataException("This track is not streamable for the account.");
-                var service = new ReliableQobuzService(token);
+                var service = new ReliableQobuzService(token, client);
                 var stream = await service.TrackGetFileUrlAsync(item.Id.ToString(), format, appId, auth, secret).ConfigureAwait(false);
                 var quality = AudioQuality.FromResponse(stream, item, format);
                 string extension = quality.IsFlac ? ".flac" : ".mp3";
                 var padding = new PaddingNumbers();
                 int tracks = playlist == null ? padding.padTracks(album) : padding.padPlaylistTracks(playlist);
                 int discs = playlist == null ? padding.padDiscs(album) : 2;
-                using (var files = new DownloadFile())
+                using (var files = new DownloadFile(client, stats?.Artwork))
                 {
                     path = await files.createPath(root, artistTemplate, albumTemplate, trackTemplate, playlistTemplate, null,
                         tracks, discs, album, item, playlist, format, quality).ConfigureAwait(false);
@@ -54,7 +57,7 @@ namespace QobuzDownloaderX
                     string destination = DownloadFile.SafePath(root, Path.Combine(path, name.TrimEnd() + extension));
                     destination = AudioVerification.IdentityPath(destination, item, format, quality);
                     path = Path.GetDirectoryName(destination) + Path.DirectorySeparatorChar;
-                    if (qbdlxForm.duplicateFileMode == DuplicateFileMode.SkipDownloads && AudioVerification.CanSkipAnyVerifiedCopy(destination, item, format, quality))
+                    if (qbdlxForm.duplicateFileMode == DuplicateFileMode.SkipDownloads && (await AudioVerification.CanSkipAnyVerifiedCopyAsync(destination, item, format, quality, token).ConfigureAwait(false)))
                     {
                         stats?.Skip();
                         getInfo.updateDownloadOutput(qbdlxForm._qbdlxForm.downloadOutputFileExists.Replace("{TrackNumber}", item.TrackNumber.ToString()) + "\r\n");

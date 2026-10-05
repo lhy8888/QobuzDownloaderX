@@ -1,4 +1,4 @@
-﻿using QobuzDownloaderX.Helpers;
+using QobuzDownloaderX.Helpers;
 using QobuzDownloaderX.Helpers.QobuzDownloaderXMOD;
 using QobuzDownloaderX.Properties;
 using QopenAPI;
@@ -23,7 +23,7 @@ namespace QobuzDownloaderX
             {
                 file.RemoveTags(TagTypes.Id3v1);
 
-                bool isFlac = tempPath.Contains(".flac");
+                bool isFlac = file is TagLib.Flac.File;
                 qbdlxForm._qbdlxForm.logger.Debug(isFlac ? "FLAC detected, setting FLAC specific tags" : "Non-FLAC detected, setting MP3 specific tags");
 
                 if (isFlac)
@@ -177,7 +177,7 @@ namespace QobuzDownloaderX
             if (Settings.Default.trackTitleTag)
             {
                 string titleFormatted = QoItem.Version == null
-                                        ? QoItem.Title
+                                        ? QoItem.Title ?? ""
                                         : $"{QoItem.Title?.TrimEnd()} ({QoItem.Version})";
                 titleFormatted = RenameTemplates.repeatedParenthesesRegex.Replace(titleFormatted, "($1)");
 
@@ -261,7 +261,7 @@ namespace QobuzDownloaderX
                 file.Tag.AlbumArtists = AlbumArtists;
             } else
             {
-                var mainArtists = QoAlbum.Artists?.Where(a => a.Roles != null && a.Roles.Contains("main-artist")).ToList();
+                var mainArtists = QoAlbum.Artists?.Where(a => a != null && a.Roles != null && a.Roles.Contains("main-artist")).ToList();
                 if (mainArtists != null && mainArtists.Count > 1)
                 {
                     var allButLastArtist = string.Join(", ", mainArtists.Take(mainArtists.Count - 1).Select(a => a.Name));

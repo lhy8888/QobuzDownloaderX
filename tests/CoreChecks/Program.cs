@@ -432,6 +432,7 @@ class Program
             }
             Check(attempts.Count==200&&!Directory.EnumerateFiles(folder,"*.tmp").Any());
         });
+        RegressionChecks.Register(Add, Temporary, Fixture);
         int failed=0; var report=new CheckReport();
         try
         {
@@ -480,9 +481,9 @@ class BlockingRead : NonSeek
 // UI adapters only: all networking, identity, quality, file verification, crypto failure handling and pagination above use production files.
 namespace QobuzDownloaderX
 {
-    class qbdlxForm{public static qbdlxForm _qbdlxForm=new();public Logger logger=new();public TextBoxAdapter downloadOutput=new();public Language languageManager=new();}
+    class qbdlxForm{public void InvokeOutput(Action update)=>update();public static qbdlxForm _qbdlxForm=new();public Logger logger=new();public TextBoxAdapter downloadOutput=new();public Language languageManager=new();}
     class Logger{public void Debug(string s){}public void Error(string s){}public void Warning(string s){}}
-    class TextBoxAdapter{public string TextValue="";public string Text{get=>TextValue;set=>TextValue=value;}}
+    class TextBoxAdapter{public void Clear()=>Text="";public void AppendText(string value)=>Text+=value;public string TextValue="";public string Text{get=>TextValue;set=>TextValue=value;}}
     class Language{public string GetTranslation(string key)=>"succeeded {0}, failed {1}, skipped {2}";}
 }
 namespace QobuzDownloaderX.Helpers

@@ -118,6 +118,8 @@
     <Reference Include="System">
       <HintPath>..\..\..\..\..\..\Program Files (x86)\Reference Assemblies\Microsoft\Framework\.NETFramework\v4.8\System.dll</HintPath>
     </Reference>
+    <Reference Include="NLayer"><HintPath>..\packages\NLayer.3.0.0\lib\netstandard2.0\NLayer.dll</HintPath><Private>True</Private></Reference>
+    <Reference Include="netstandard"><HintPath Condition="'$(FrameworkPathOverride)' != ''">$(FrameworkPathOverride)\Facades\netstandard.dll</HintPath><Private>False</Private></Reference>
     <Reference Include="System.Configuration" />
     <Reference Include="System.Core" />
     <Reference Include="System.Net.Http" />
@@ -139,6 +141,13 @@
   <ItemGroup>
     <Compile Include="GlobalSuppressions.cs" />
     <Compile Include="Helpers\BufferedLogger.cs" />
+    <Compile Include="Helpers\QobuzLink.cs" />
+    <Compile Include="Helpers\AppPaths.cs" />
+    <Compile Include="Helpers\SettingsStore.cs" />
+    <Compile Include="Helpers\Download\AtomicFiles.cs" />
+    <Compile Include="Helpers\Download\ArtworkCache.cs" />
+    <Compile Include="Helpers\Download\VerifiedAudioCommit.cs" />
+    <Compile Include="Helpers\Download\Mp3Verification.cs" />
     <Compile Include="Helpers\FlexibleSettingsProvider.cs" />
     <Compile Include="Helpers\Download\DuplicateFileMode.cs" />
     <Compile Include="Helpers\Download\DownloadStats.cs" />

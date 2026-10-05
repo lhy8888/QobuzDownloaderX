@@ -1,4 +1,5 @@
 {
+    "downloadResultUserSkipped": "Ignorés manuellement : {0}",
     "processed": "traités",
     "downloadResultSummary": "Download results: succeeded {0}, failed {1}, skipped {2}",
     "TranslationCredit":            "Greenwild",

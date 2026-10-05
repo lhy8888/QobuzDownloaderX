@@ -1,11 +1,13 @@
-﻿using QobuzDownloaderX.Helpers;
+using QobuzDownloaderX.Helpers;
 using QobuzDownloaderX.Properties;
 using QopenAPI;
 using System;
 using System.Diagnostics;
 using System.Drawing;
+using Image = System.Drawing.Image;
 using System.Globalization;
 using System.IO;
+using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
 using ZetaLongPaths;
@@ -15,7 +17,11 @@ namespace QobuzDownloaderX
     internal sealed class DownloadFile : IDisposable
     {
         private readonly RenameTemplates renameTemplates = new RenameTemplates();
-        private readonly string artworkDirectory = Path.Combine(Path.GetTempPath(), "QobuzDownloaderX", Guid.NewGuid().ToString("N"));
+        private readonly HttpClient client;
+        private readonly ArtworkCache artwork;
+        private readonly bool ownsArtwork;
+        internal DownloadFile(HttpClient client = null, ArtworkCache artwork = null)
+        { this.client = client; this.artwork = artwork ?? new ArtworkCache(); ownsArtwork = artwork == null; }
         public string embeddedArtworkPath { get; private set; }
 
         public Task<string> createPath(string downloadLocation, string artistTemplate, string albumTemplate, string trackTemplate,
@@ -76,40 +82,30 @@ namespace QobuzDownloaderX
                             qbdlxForm._qbdlxForm.BeginInvoke(new Action(() => qbdlxForm._qbdlxForm.progressLabel.Text =
                                 qbdlxForm._qbdlxForm.progressLabelActive + " - " + percent + "%" + (stats?.SpeedWatch == null ? "" : " [" + stats.LastSpeedText + "]")));
                         }
-                    }).ConfigureAwait(false);
+                    }, client).ConfigureAwait(false);
                 token.ThrowIfCancellationRequested();
                 AudioVerification.Inspect(temporary, item, quality);
                 TagFile.WriteToFile(temporary, embeddedArtworkPath, album, item);
                 if (quality.IsFlac) await new FixMD5().ValidateAsync(temporary, Settings.Default.fixMD5s, token).ConfigureAwait(false);
+                else await Mp3Verification.ValidateAsync(temporary, token).ConfigureAwait(false);
                 AudioVerification.Inspect(temporary, item, quality);
                 token.ThrowIfCancellationRequested();
-                string destination = filePath;
-                if (qbdlxForm.duplicateFileMode == DuplicateFileMode.OverwriteExistingFiles)
-                    ZlpIOHelper.MoveFile(temporary, destination, overwriteExisting: true);
-                else
-                {
-                    // A competing process may create a name after the existence check. Never overwrite it.
-                    for (int attempt = 0; ; attempt++)
-                    {
-                        destination = Miscellaneous.GetDuplicateFileName(filePath);
-                        try { ZlpIOHelper.MoveFile(temporary, destination, overwriteExisting: false); break; }
-                        catch (Exception) when (attempt < 1000 && ZlpIOHelper.FileExists(destination)) { }
-                    }
-                }
-                AudioVerification.SaveReceipt(destination, item, requestedFormat, quality);
+                string json = await AudioVerification.CreateReceiptAsync(temporary, item, requestedFormat, quality, token).ConfigureAwait(false);
+                VerifiedAudioCommit.Commit(temporary, json, filePath,
+                    qbdlxForm.duplicateFileMode == DuplicateFileMode.OverwriteExistingFiles, token);
                 stats?.Success();
                 getInfo.updateDownloadOutput(" " + qbdlxForm._qbdlxForm.downloadOutputDone + "\r\n");
             }
             finally { if (ZlpIOHelper.FileExists(temporary)) ZlpIOHelper.DeleteFile(temporary); }
         }
 
-        private static async Task DownloadImage(string url, string path, CancellationToken token)
+        private async Task DownloadImage(string url, string path, CancellationToken token)
         {
             ZlpIOHelper.CreateDirectory(Path.GetDirectoryName(path));
             string temporary = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
             try
             {
-                await ReliableHttp.DownloadAsync(url, temporary, TimeSpan.FromMinutes(2), token).ConfigureAwait(false);
+                await ReliableHttp.DownloadAsync(url, temporary, TimeSpan.FromMinutes(2), token, client: client).ConfigureAwait(false);
                 using (var image = System.Drawing.Image.FromFile(temporary))
                     if (image.Width <= 0 || image.Height <= 0) throw new InvalidDataException("Invalid cover image.");
                 token.ThrowIfCancellationRequested();
@@ -119,6 +115,12 @@ namespace QobuzDownloaderX
             finally { if (File.Exists(temporary)) File.Delete(temporary); }
         }
 
+        private Task<string> CachedImage(Album album, string size, CancellationToken token)
+        {
+            string url = album.Image.Large.Replace("_600", "_" + size);
+            string key = album.Id + "\n" + size + "\n" + url;
+            return artwork.GetAsync(key, (path, cancellation) => DownloadImage(url, path, cancellation), token);
+        }
         public async Task DownloadArtwork(string downloadPath, Album album, CancellationToken token = default(CancellationToken), bool separateCovers = false)
         {
             if (string.IsNullOrWhiteSpace(album?.Image?.Large)) return;
@@ -126,18 +128,25 @@ namespace QobuzDownloaderX
             {
                 string cover = Path.Combine(downloadPath, separateCovers ? "Cover-" + renameTemplates.GetSafeFilename(album.Id) + ".jpg" : "Cover.jpg");
                 bool valid = false;
-                try { using (var image = System.Drawing.Image.FromFile(cover)) valid = image.Width > 0 && image.Height > 0; }
+                try { using (var image = Image.FromFile(cover)) valid = image.Width > 0 && image.Height > 0; }
                 catch (Exception ex) when (ex is IOException || ex is ArgumentException || ex is OutOfMemoryException) { }
                 if (!valid)
                 {
-                    if (File.Exists(cover)) File.Delete(cover);
-                    await DownloadImage(album.Image.Large.Replace("_600", "_" + qbdlxForm._qbdlxForm.savedArtSize), cover, token).ConfigureAwait(false);
+                    string cached = await CachedImage(album, qbdlxForm._qbdlxForm.savedArtSize, token).ConfigureAwait(false);
+                    Directory.CreateDirectory(downloadPath);
+                    string temporary = Path.Combine(downloadPath, ".qbdlx-cover-" + Guid.NewGuid().ToString("N") + ".tmp");
+                    try
+                    {
+                        await AtomicFiles.CopyAsync(cached, temporary, token).ConfigureAwait(false);
+                        token.ThrowIfCancellationRequested();
+                        if (File.Exists(cover)) File.Replace(temporary, cover, null);
+                        else File.Move(temporary, cover);
+                    }
+                    finally { AtomicFiles.TryDelete(temporary); }
                 }
             }
-            if (!Settings.Default.imageTag) return;
-            embeddedArtworkPath = Path.Combine(artworkDirectory, album.Id + "-" + qbdlxForm._qbdlxForm.embeddedArtSize + ".jpg");
-            if (!File.Exists(embeddedArtworkPath))
-                await DownloadImage(album.Image.Large.Replace("_600", "_" + qbdlxForm._qbdlxForm.embeddedArtSize), embeddedArtworkPath, token).ConfigureAwait(false);
+            if (Settings.Default.imageTag)
+                embeddedArtworkPath = await CachedImage(album, qbdlxForm._qbdlxForm.embeddedArtSize, token).ConfigureAwait(false);
         }
 
         public async Task DownloadGoody(string downloadPath, Album album, Goody goody, GetInfo getInfo, CancellationToken token)
@@ -148,17 +157,12 @@ namespace QobuzDownloaderX
             string temporary = destination + "." + Guid.NewGuid().ToString("N") + ".tmp";
             try
             {
-                await ReliableHttp.DownloadAsync(goody.Url, temporary, TimeSpan.FromMinutes(5), token).ConfigureAwait(false);
+                await ReliableHttp.DownloadAsync(goody.Url, temporary, TimeSpan.FromMinutes(5), token, client: client).ConfigureAwait(false);
                 token.ThrowIfCancellationRequested();
                 ZlpIOHelper.MoveFile(temporary, destination, overwriteExisting: true);
             }
             finally { if (ZlpIOHelper.FileExists(temporary)) ZlpIOHelper.DeleteFile(temporary); }
         }
-        public void Dispose()
-        {
-            try { if (Directory.Exists(artworkDirectory)) Directory.Delete(artworkDirectory, true); }
-            catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException)
-            { qbdlxForm._qbdlxForm.logger.Warning("Temporary artwork could not be removed."); }
-        }
+        public void Dispose() { if (ownsArtwork) artwork.Dispose(); }
     }
 }

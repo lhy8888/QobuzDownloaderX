@@ -55,6 +55,7 @@ internal static class Program
         string reportPath = Environment.GetEnvironmentVariable("QBDLX_TEST_REPORT");
         if (!string.IsNullOrEmpty(reportPath)) Environment.SetEnvironmentVariable("QBDLX_TEST_REPORT", Path.GetFullPath(reportPath));
         Directory.CreateDirectory(temporary);
+        AppPaths.TestDataDirectory = Path.Combine(temporary, "user-data");
         string previous = Environment.CurrentDirectory;
         Environment.CurrentDirectory = temporary;
         var report = new CheckReport();
@@ -263,6 +264,7 @@ internal static class Program
             Check(summary.Contains("{0}") && summary.Contains("{1}") && summary.Contains("{2}"));
             Check(language.GetTranslation("processed") == "processed");
         });
+        DownloadFlowChecks.Register(Add, () => form, temporary);
         Add("login completion opens the real main window on the original UI thread", () =>
         {
             Check(Environment.CurrentDirectory != AppDomain.CurrentDomain.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar));

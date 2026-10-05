@@ -1,4 +1,5 @@
 {
+    "downloadResultUserSkipped": "Skipped by you: {0}",
     "processed": "processed",
     "downloadResultSummary": "Download results: succeeded {0}, failed {1}, skipped {2}",
     "TranslationCredit":            "AiiR",
@@ -228,6 +229,6 @@
     "tip15":                        "Fun fact #2: Did you know that some people have died while using this program? 😱 … from boredom while waiting for a whole record label to fully download. 👻",
     "tip16":                        "Fun fact #3: Did you know that staring at the “Download” button for 10 seconds could make downloads go faster… in your imagination? 👀",
     "tip17":                        "Fun fact #4: Did you know that clapping after each successful download helps motivate the program for the next song? 👏",
-    "tip18":                        "Fun fact #5: Did you know that if you search for \"Terrorcore\" in the searcher, the authors of this program are not responsible for any brain or hearing damage it may cause you? 😵💉"
-
+    "tip18":                        "Fun fact #5: Did you know that if you search for \"Terrorcore\" in the searcher, the authors of this program are not responsible for any brain or hearing damage it may cause you? 😵💉",
+    "downloadResultUserSkipped": "Skipped by you: {0}"
 }
